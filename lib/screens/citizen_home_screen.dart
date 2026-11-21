@@ -537,7 +537,7 @@ class _SosCardState extends State<_SosCard>
                                 Text(
                                   _hold.isAnimating
                                       ? 'Keep holding…'
-                                      : 'Hold 3 sec',
+                                      : 'tap to start',
                                   style: TextStyle(
                                     color: Colors.white.withValues(alpha: 0.9),
                                     fontSize: 13,

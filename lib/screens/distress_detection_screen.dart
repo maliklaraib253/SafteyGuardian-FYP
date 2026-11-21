@@ -217,18 +217,6 @@ class _DistressDetectionScreenState extends State<DistressDetectionScreen>
     DistressMonitor.instance.trigger(reason);
   }
 
-  void _addAlert(String message) {
-    setState(() {
-      _recentAlerts.insert(
-        0,
-        '$message - ${DateTime.now().hour}:${DateTime.now().minute}',
-      );
-      if (_recentAlerts.length > 5) {
-        _recentAlerts.removeLast();
-      }
-    });
-  }
-
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);

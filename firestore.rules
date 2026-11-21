@@ -101,26 +101,28 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // User profiles (name, CNIC, face data): only the owner and police.
+    // User profiles (name, CNIC, face data): only the owner, police and admins.
     // Signup's "already registered?" check uses /registry instead.
     match /users/{userId} {
       allow read: if isOwner(userId) || isPolice() || isAdmin();
       allow create: if isOwner(userId) && !('blocked' in request.resource.data);
       // Owners edit their profile but never their own block status.
       allow update: if (isOwner(userId) && !touchesBlockFields()) || isAdmin();
-      allow delete: if false;
+      // Admins can delete a profile (Admin Portal: "Delete account data").
+      allow delete: if isAdmin();
 
       // Private Identity Subcollection:
       // Stores biometric reference embeddings and CNIC verification records.
       // STRICTLY restricted to the owning user UID. Other users cannot read/write this.
       match /identity/{docId} {
         allow read, write: if isOwner(userId);
+        allow read, delete: if isAdmin();
       }
     }
 
     // Incident Reports collection
     match /reports/{reportId} {
-      // Only the person who reported it, or police, can read a report.
+      // Only the person who reported it, police or admins can read a report.
       allow read: if isOwner(resource.data.userId) || isPolice() || isAdmin();
 
       // Creator must be logged in, submit under their own UID and be
@@ -141,15 +143,14 @@ service cloud.firestore {
       // change moderation flags.
       allow update: if isAdmin()
                     || (isPolice() && !touchesModerationFields())
-                    || (isOwner(resource.data.userId) && !touchesPoliceFields()
-                        && !touchesModerationFields());
+                    || (isOwner(resource.data.userId) && !isBlocked()
+                        && !touchesPoliceFields() && !touchesModerationFields());
       allow delete: if isOwner(resource.data.userId) || isPolice() || isAdmin();
     }
 
-    // Identity behind anonymous reports. Write-once by the reporter; nobody
-    // can read it from the app (only an admin, via the Firebase console,
-    // e.g. under a court order or for a malicious fake report).
-    // Admins may look one up from the portal; every look-up is logged there.
+    // Identity behind anonymous reports. Write-once by the reporter. Police
+    // can never read it; an admin can look one up from the portal (with a
+    // reason that is written to the activity log), e.g. for a malicious report.
     match /report_identity/{reportId} {
       allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
       allow get: if isAdmin();
@@ -167,27 +168,8 @@ service cloud.firestore {
       allow update: if isAuthenticated()
                     && resource.data.uid == request.auth.uid
                     && request.resource.data.uid == request.auth.uid;
-      allow delete: if isAuthenticated() && resource.data.uid == request.auth.uid;
-    }
-
-    // Emergency Contacts collection
-    match /contacts/{contactId} {
-      allow read, write: if isAuthenticated() && request.auth.uid == resource.data.userId;
-      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.userId;
-    }
-
-    // SOS events collection
-    match /sos_events/{eventId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isPolice());
-      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
-      allow update: if isAuthenticated() && (request.auth.uid == resource.data.userId || isPolice());
-    }
-
-    // Older Companion Mode trips (document id = the traveller's uid).
-    match /trips/{tripId} {
-      allow read: if isOwner(tripId) || isPolice();
-      allow create, update: if isOwner(tripId);
-      allow delete: if isOwner(tripId) || isPolice();
+      allow delete: if (isAuthenticated() && resource.data.uid == request.auth.uid)
+                    || isAdmin();
     }
 
     // Companion Mode live tracking sessions

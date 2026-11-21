@@ -203,10 +203,13 @@ class OwnerFaceBlur {
       // 1. Cloud match against every reference picture of the owner.
       for (var refIndex = 0; refIndex < ownerReferences.length; refIndex++) {
         final ref = ownerReferences[refIndex];
+        // Ask AWS for every face down to 40% so the preview can show how
+        // close the best face was; only faces >= _awsMatchThreshold are
+        // treated as the owner.
         final aws = await AwsRekognitionService().compareFaces(
           sourceBytes: ref,
           targetBytes: prepared.bytes,
-          similarityThreshold: _awsMatchThreshold,
+          similarityThreshold: 40,
         );
         if (!aws.success) {
           awsError = aws.errorMessage;
@@ -236,6 +239,7 @@ class OwnerFaceBlur {
       String detail;
       // 2. On-device fallback when AWS could not be used.
       if (!awsWorked) {
+        debugPrint('[OwnerBlur] cloud check unavailable: $awsError');
         if (ownerEmbedding == null || faces.isEmpty) {
           detail = faces.isEmpty
               ? 'No faces found'
@@ -256,7 +260,8 @@ class OwnerFaceBlur {
           if (isOwner) boxes.add(best.key.boundingBox);
           detail = isOwner
               ? 'Matched on device (${(best.value * 100).round()}%)'
-              : 'No match on device (best ${(best.value * 100).round()}%)';
+              : 'Cloud check failed, phone check: no match '
+                    '(best ${(best.value * 100).round()}%). ${awsError ?? ''}';
         }
       } else {
         detail = boxes.isNotEmpty
@@ -285,7 +290,9 @@ class OwnerFaceBlur {
           file: evidence,
           facesInPhoto: faces.length,
           ownerBlurred: false,
-          checked: awsWorked || ownerEmbedding != null,
+          // Only a cloud (AWS) answer counts as a real check; the phone-only
+          // fallback is too weak to say "you are not in this photo".
+          checked: awsWorked,
           detail: detail,
         );
       }

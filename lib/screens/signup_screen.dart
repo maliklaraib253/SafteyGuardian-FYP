@@ -263,7 +263,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
     }
 
     setState(() {
-      _selfieImageFile = result.selfieFile;
+      // Upright copy the face was found in (used as the reference face).
+      _selfieImageFile = result.processedSelfieFile ?? result.selfieFile;
       _selfieEmbedding = result.embedding;
       _matchSimilarity = result.similarityScore;
       _isIdentityVerified = true;
@@ -364,11 +365,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
           }
         }
       }
-      if (user == null) {
+      if (user == null)
         throw Exception(
           'Registration failed: User session could not be authenticated.',
         );
-      }
       final uid = user.uid;
 
       // 2. Upload private CNIC reference image to protected storage
@@ -410,6 +410,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
           cnicEmbedding: _cnicEmbedding,
           similarityScore: _matchSimilarity,
           cnicPhotoUrl: cnicPhotoUrl,
+          selfieImage: _selfieImageFile,
+          cnicFaceImage: _cnicCroppedFaceFile,
         );
       } catch (e) {
         debugPrint('Subcollection save note: $e');

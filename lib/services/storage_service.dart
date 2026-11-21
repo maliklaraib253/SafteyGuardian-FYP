@@ -1,4 +1,6 @@
 import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
 class StorageService {
@@ -13,7 +15,7 @@ class StorageService {
       String url = await ref.getDownloadURL();
       return url;
     } catch (e) {
-      print('Upload error: $e');
+      debugPrint('Upload error: $e');
       return null;
     }
   }
@@ -44,7 +46,7 @@ class StorageService {
       );
       return await ref.getDownloadURL();
     } catch (e) {
-      print('Identity upload error: $e');
+      debugPrint('Identity upload error: $e');
       return null;
     }
   }

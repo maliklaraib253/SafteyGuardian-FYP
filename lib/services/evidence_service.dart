@@ -100,7 +100,7 @@ class EvidenceService {
       await _cameraController!.startVideoRecording();
       _isRecordingVideo = true;
     } catch (e) {
-      print('Start recording error: $e');
+      debugPrint('Start recording error: $e');
       await _stopForegroundService();
     }
   }
@@ -124,14 +124,14 @@ class EvidenceService {
       );
 
       if (result.isSuccess) {
-        print('✅ Video saved to gallery');
+        debugPrint('✅ Video saved to gallery');
         return _recordedVideo!.path;
       } else {
-        print('❌ Gallery save failed');
+        debugPrint('❌ Gallery save failed');
         return _recordedVideo!.path; // return path anyway
       }
     } catch (e) {
-      print('Stop recording error: $e');
+      debugPrint('Stop recording error: $e');
       await _stopForegroundService();
       return null;
     }
@@ -149,16 +149,18 @@ class EvidenceService {
       }
       try {
         Position position = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high,
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+          ),
         );
         _locationPoints.add({
           'lat': position.latitude,
           'lng': position.longitude,
           'time': DateTime.now().toIso8601String(),
         });
-        print('📍 ${position.latitude}, ${position.longitude}');
+        debugPrint('📍 ${position.latitude}, ${position.longitude}');
       } catch (e) {
-        print('Location error: $e');
+        debugPrint('Location error: $e');
       }
     });
   }
@@ -191,10 +193,10 @@ class EvidenceService {
       }
 
       await file.writeAsString(content);
-      print('📍 Location saved: ${file.path}');
+      debugPrint('📍 Location saved: ${file.path}');
       return file.path;
     } catch (e) {
-      print('Save location error: $e');
+      debugPrint('Save location error: $e');
       return null;
     }
   }

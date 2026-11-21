@@ -11,6 +11,8 @@ import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/routing_service.dart';
+import '../widgets/evidence_image.dart';
+import 'police_profile_screen.dart';
 
 class PoliceDashboardScreen extends StatefulWidget {
   const PoliceDashboardScreen({super.key});
@@ -698,36 +700,47 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
         children: [
           Row(
             children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: _CC.accent,
-                  borderRadius: BorderRadius.circular(10),
+              if (!phone) ...[
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: _CC.accent,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.shield_outlined,
+                    color: Colors.white,
+                    size: 20,
+                  ),
                 ),
-                child: const Icon(
-                  Icons.shield_outlined,
-                  color: Colors.white,
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Control Room',
-                    style: TextStyle(
-                      color: c.text,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 15,
+                const SizedBox(width: 10),
+              ],
+              // Flexible so the title shrinks instead of overflowing on
+              // narrow phones.
+              Flexible(
+                flex: phone ? 1 : 0,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Control Room',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: c.text,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
                     ),
-                  ),
-                  Text(
-                    'Safety Guardian · Police',
-                    style: TextStyle(color: c.muted, fontSize: 12),
-                  ),
-                ],
+                    Text(
+                      'Safety Guardian · Police',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: c.muted, fontSize: 12),
+                    ),
+                  ],
+                ),
               ),
               if (!phone) ...[
                 const SizedBox(width: 24),
@@ -737,8 +750,7 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
                     child: search,
                   ),
                 ),
-              ] else
-                const Spacer(),
+              ],
               if (critical > 0)
                 Padding(
                   padding: const EdgeInsets.only(left: 8),
@@ -782,6 +794,7 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
                     ),
                   ),
                 ),
+              if (!phone)
               IconButton(
                 key: const Key('police_theme_toggle'),
                 tooltip: _dark
@@ -793,6 +806,7 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
                   color: c.text,
                 ),
               ),
+              if (!phone)
               IconButton(
                 key: const Key('open_prioritization_button'),
                 tooltip: 'Report prioritization',
@@ -806,12 +820,68 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
                 icon: Icon(Icons.account_circle_outlined, color: c.text),
                 onSelected: (v) {
                   if (v == 'logout') FirebaseAuth.instance.signOut();
+                  if (v == 'theme') _toggleTheme();
+                  if (v == 'prioritization') {
+                    Navigator.pushNamed(context, '/prioritization');
+                  }
+                  if (v == 'profile') {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => PoliceProfileScreen(dark: _dark),
+                      ),
+                    );
+                  }
                 },
                 itemBuilder: (_) => [
                   PopupMenuItem(
                     enabled: false,
                     child: Text(email, style: TextStyle(color: c.muted)),
                   ),
+                  PopupMenuItem(
+                    value: 'profile',
+                    child: Row(
+                      children: [
+                        Icon(Icons.person_outline, size: 18, color: c.text),
+                        const SizedBox(width: 10),
+                        Text('My profile', style: TextStyle(color: c.text)),
+                      ],
+                    ),
+                  ),
+                  if (phone) ...[
+                    PopupMenuItem(
+                      value: 'theme',
+                      child: Row(
+                        children: [
+                          Icon(
+                            _dark
+                                ? Icons.light_mode_outlined
+                                : Icons.dark_mode_outlined,
+                            size: 18,
+                            color: c.text,
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            _dark ? 'Light theme' : 'Dark theme',
+                            style: TextStyle(color: c.text),
+                          ),
+                        ],
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 'prioritization',
+                      child: Row(
+                        children: [
+                          Icon(Icons.insights, size: 18, color: c.text),
+                          const SizedBox(width: 10),
+                          Text(
+                            'Report prioritization',
+                            style: TextStyle(color: c.text),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   PopupMenuItem(
                     value: 'logout',
                     child: Row(
@@ -1738,19 +1808,18 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
                     builder: (_) => Dialog(
                       backgroundColor: Colors.black,
                       insetPadding: const EdgeInsets.all(12),
-                      child: InteractiveViewer(child: Image.network(url)),
+                      child: InteractiveViewer(
+                        child: EvidenceImage(
+                          url,
+                          fit: BoxFit.contain,
+                          placeholderColor: Colors.black,
+                        ),
+                      ),
                     ),
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(10),
-                    child: Image.network(
-                      url,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => Container(
-                        color: c.chip,
-                        child: Icon(Icons.broken_image, color: c.muted),
-                      ),
-                    ),
+                    child: EvidenceImage(url, placeholderColor: c.chip),
                   ),
                 ),
             ],
@@ -2695,25 +2764,20 @@ class PoliceReportCard extends StatelessWidget {
                                   child: GestureDetector(
                                     onTap: () => Navigator.pop(context),
                                     child: InteractiveViewer(
-                                      child: Image.network(imageUrls[index]),
+                                      child: EvidenceImage(
+                                        imageUrls[index],
+                                        fit: BoxFit.contain,
+                                        placeholderColor: Colors.black,
+                                      ),
                                     ),
                                   ),
                                 ),
                               );
                             },
-                            child: Image.network(
+                            child: EvidenceImage(
                               imageUrls[index],
                               width: 100,
                               height: 100,
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) {
-                                return Container(
-                                  width: 100,
-                                  height: 100,
-                                  color: Colors.grey,
-                                  child: const Icon(Icons.broken_image),
-                                );
-                              },
                             ),
                           ),
                         );

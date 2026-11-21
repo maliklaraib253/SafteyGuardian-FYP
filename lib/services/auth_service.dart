@@ -1,8 +1,12 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+import 'package:image/image.dart' as img;
+import 'package:path_provider/path_provider.dart';
 
 import 'police_access.dart';
 import 'face_verification_config.dart';
@@ -35,66 +39,6 @@ class AuthService {
       return 'police';
     }
     return 'citizen';
-  }
-
-  // ─── CREDENTIAL PRE-CHECK (EMAIL & CNIC) ────────────────────────────────────
-
-  /// Checks whether the given email or CNIC is already in use by an existing account.
-  /// Used in Step 1 of registration to avoid wasted effort before biometric verification.
-  Future<CredentialCheckResult> checkCredentialsAvailability({
-    required String email,
-    required String cnic,
-  }) async {
-    final cleanEmail = email.trim().toLowerCase();
-    final cleanCnic = cnic.trim();
-
-    bool emailInUse = false;
-    bool cnicInUse = false;
-
-    // 1. Check email via Firebase Auth
-    try {
-      // ignore: deprecated_member_use
-      final methods = await _auth.fetchSignInMethodsForEmail(cleanEmail);
-      if (methods.isNotEmpty) {
-        emailInUse = true;
-      }
-    } on FirebaseAuthException catch (e) {
-      if (e.code == 'email-already-in-use') {
-        emailInUse = true;
-      }
-    } catch (_) {
-      // Continue to Firestore check
-    }
-
-    // 2 + 3. Check the private registry (hashed email / CNIC only; user
-    // profiles themselves are no longer readable by other people).
-    try {
-      if (!emailInUse) emailInUse = await isEmailRegistered(cleanEmail);
-    } catch (_) {}
-    try {
-      cnicInUse = await isCnicRegistered(cleanCnic);
-    } catch (_) {}
-
-    if (emailInUse && cnicInUse) {
-      return const CredentialCheckResult(
-        isEmailInUse: true,
-        isCnicInUse: true,
-        errorMessage: 'Email and CNIC are both already registered.',
-      );
-    } else if (emailInUse) {
-      return const CredentialCheckResult(
-        isEmailInUse: true,
-        errorMessage:
-            'Email is already used. Please sign in or use a different email.',
-      );
-    } else if (cnicInUse) {
-      return const CredentialCheckResult(
-        isCnicInUse: true,
-        errorMessage: 'CNIC is already used. Each CNIC can only be linked to one account.',
-      );
-    }
-
-    return const CredentialCheckResult();
   }
 
   // ─── PRIVATE REGISTRY (is this email / CNIC already taken?) ─────────────────
@@ -179,7 +123,14 @@ class AuthService {
     List<double>? cnicEmbedding,
     required double similarityScore,
     String? cnicPhotoUrl,
+    File? selfieImage,
+    File? cnicFaceImage,
   }) async {
+    // Small copies of the sign-up selfie and CNIC face, kept in the private
+    // identity record. Later selfies (e.g. when reporting) are compared with
+    // these, and only faces matching them are blurred in evidence photos.
+    final selfieJpeg = await compressFace(selfieImage);
+    final cnicJpeg = await compressFace(cnicFaceImage);
     await _firestore
         .collection('users')
         .doc(uid)
@@ -191,6 +142,8 @@ class AuthService {
           'cnicEmbedding': ?cnicEmbedding,
           'similarityScore': similarityScore,
           'cnicPhotoUrl': cnicPhotoUrl,
+          if (selfieJpeg != null) 'referenceSelfie': Blob(selfieJpeg),
+          if (cnicJpeg != null) 'referenceCnicFace': Blob(cnicJpeg),
           'verifiedAt': FieldValue.serverTimestamp(),
           'status': 'verified',
         });
@@ -244,6 +197,88 @@ class AuthService {
     return null;
   }
 
+  /// Resizes a face picture to at most 480 px and JPEG quality 80 (about
+  /// 30-60 KB) so it fits comfortably in a Firestore document.
+  static Future<Uint8List?> compressFace(File? file) async {
+    if (file == null) return null;
+    try {
+      if (!await file.exists()) return null;
+      return await compute(_compressFaceBytes, await file.readAsBytes());
+    } catch (e) {
+      debugPrint('[AuthService] could not compress face picture: $e');
+      return null;
+    }
+  }
+
+  static Uint8List? _compressFaceBytes(Uint8List bytes) {
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) return null;
+    final upright = img.bakeOrientation(decoded);
+    final longest = upright.width > upright.height
+        ? upright.width
+        : upright.height;
+    final resized = longest > 480
+        ? img.copyResize(
+            upright,
+            width: upright.width >= upright.height ? 480 : null,
+            height: upright.height > upright.width ? 480 : null,
+          )
+        : upright;
+    return Uint8List.fromList(img.encodeJpg(resized, quality: 80));
+  }
+
+  /// The sign-up selfie and CNIC face saved by [saveUserIdentityReference],
+  /// written to temporary files (AWS and the face blur read files).
+  Future<({File? selfie, File? cnicFace})> getReferenceFaceFiles(
+    String uid,
+  ) async {
+    try {
+      final doc = await _firestore
+          .collection('users')
+          .doc(uid)
+          .collection(FaceVerificationConfig.identitySubcollection)
+          .doc(FaceVerificationConfig.identityDocId)
+          .get();
+      final data = doc.data();
+      if (data == null) return (selfie: null, cnicFace: null);
+      final dir = await getTemporaryDirectory();
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      Future<File?> write(dynamic value, String name) async {
+        if (value is! Blob || value.bytes.isEmpty) return null;
+        final f = File('${dir.path}/${name}_$stamp.jpg');
+        await f.writeAsBytes(value.bytes, flush: true);
+        return f;
+      }
+
+      return (
+        selfie: await write(data['referenceSelfie'], 'ref_selfie'),
+        cnicFace: await write(data['referenceCnicFace'], 'ref_cnic'),
+      );
+    } catch (e) {
+      debugPrint('[AuthService] reference faces not loaded: $e');
+      return (selfie: null, cnicFace: null);
+    }
+  }
+
+  /// For accounts created before reference pictures were saved: stores the
+  /// selfie the user has just verified with, once.
+  Future<void> saveReferenceSelfieIfMissing(String uid, File? selfie) async {
+    final bytes = await compressFace(selfie);
+    if (bytes == null) return;
+    try {
+      final ref = _firestore
+          .collection('users')
+          .doc(uid)
+          .collection(FaceVerificationConfig.identitySubcollection)
+          .doc(FaceVerificationConfig.identityDocId);
+      final doc = await ref.get();
+      if (doc.data()?['referenceSelfie'] is Blob) return;
+      await ref.set({'referenceSelfie': Blob(bytes)}, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('[AuthService] could not save reference selfie: $e');
+    }
+  }
+
   /// Checks whether the user has completed identity verification.
   Future<bool> isUserIdentityVerified(String uid) async {
     try {
@@ -254,19 +289,4 @@ class AuthService {
       return false;
     }
   }
-}
-
-/// Result of checking whether email and/or CNIC are already registered in the system.
-class CredentialCheckResult {
-  final bool isEmailInUse;
-  final bool isCnicInUse;
-  final String? errorMessage;
-
-  const CredentialCheckResult({
-    this.isEmailInUse = false,
-    this.isCnicInUse = false,
-    this.errorMessage,
-  });
-
-  bool get isAvailable => !isEmailInUse && !isCnicInUse;
 }

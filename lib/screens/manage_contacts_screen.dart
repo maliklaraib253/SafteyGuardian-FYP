@@ -298,6 +298,7 @@ class _ManageContactsScreenState extends State<ManageContactsScreen> {
             : ReorderableListView.builder(
                 padding: const EdgeInsets.all(16),
                 itemCount: _contacts.length,
+                // ignore: deprecated_member_use
                 onReorder: _reorderContacts,
                 itemBuilder: (context, index) {
                   final contact = _contacts[index];

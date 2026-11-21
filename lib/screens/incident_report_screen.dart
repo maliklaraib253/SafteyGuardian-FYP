@@ -13,7 +13,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:geolocator/geolocator.dart';
 
-import '../services/storage_service.dart';
+import '../services/evidence_storage.dart';
 import '../services/report_analysis_service.dart';
 import '../services/face_blur_service.dart';
 import '../services/priority_classifier.dart';
@@ -24,7 +24,6 @@ import '../services/routing_service.dart';
 import '../services/auth_service.dart';
 import 'live_face_verification_screen.dart';
 
-import 'package:dio/dio.dart';
 import 'package:latlong2/latlong.dart' show LatLng;
 
 import 'location_picker_screen.dart';
@@ -44,31 +43,6 @@ class IncidentReportScreen extends StatefulWidget {
 }
 
 class _IncidentReportScreenState extends State<IncidentReportScreen> {
-  static const String _imgbbApiKey = String.fromEnvironment('IMGBB_API_KEY');
-
-  Future<String?> uploadToImgBB(XFile imageFile) async {
-    try {
-      String url = 'https://api.imgbb.com/1/upload?key=$_imgbbApiKey';
-
-      final bytes = await imageFile.readAsBytes();
-      FormData formData = FormData.fromMap({
-        'image': MultipartFile.fromBytes(bytes, filename: imageFile.name),
-      });
-
-      Response response = await Dio().post(url, data: formData);
-
-      if (response.statusCode == 200) {
-        return response.data['data']['url'];
-      }
-      return null;
-    } catch (e) {
-      print('Upload error: $e');
-      return null;
-    }
-  }
-
-  final StorageService _storage = StorageService();
-  final bool _isUploading = false;
   // Controllers
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
@@ -194,7 +168,7 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
               if (unchecked > 0) ...[
                 const SizedBox(height: 6),
                 Text(
-                  '$unchecked photo${unchecked == 1 ? '' : 's'} could not be checked (no internet). They will be uploaded unchanged.',
+                  '$unchecked photo${unchecked == 1 ? '' : 's'} could not be checked online (internet or AWS key problem). Check the text under the photo; it will be uploaded unchanged.',
                   style: TextStyle(fontSize: 12, color: Colors.orange.shade800),
                 ),
               ],
@@ -361,10 +335,12 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
         imageQuality: 80,
       );
 
+      if (!mounted) return;
       setState(() {
         _selectedImages.addAll(images);
       });
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error picking images: $e'),
@@ -384,12 +360,13 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
         imageQuality: 80,
       );
 
-      if (image != null) {
+      if (image != null && mounted) {
         setState(() {
           _selectedImages.add(image);
         });
       }
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error taking photo: $e'),
@@ -492,6 +469,10 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
     final List<double>? refEmbedding = await authService
         .getUserIdentityEmbedding(user.uid);
     final File? cnicFile = await _downloadCnicPhoto(user.uid);
+    // Small copies of the CNIC face and selfie taken at sign-up.
+    final refs = await authService.getReferenceFaceFiles(user.uid);
+    final File? signupSelfie = refs.selfie;
+    final File? signupCnicFace = refs.cnicFace ?? cnicFile;
 
     if (!mounted) return;
     setState(() {
@@ -499,7 +480,8 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
       _loadingMessage = 'Submitting report...';
     });
 
-    if ((refEmbedding == null || refEmbedding.isEmpty) && cnicFile == null) {
+    if ((refEmbedding == null || refEmbedding.isEmpty) &&
+        signupCnicFace == null) {
       if (!mounted) return;
       showDialog(
         context: context,
@@ -534,8 +516,15 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
           referenceEmbedding: (refEmbedding == null || refEmbedding.isEmpty)
               ? null
               : refEmbedding,
-          // CNIC photo enables the accurate cloud (AWS) face match.
-          referenceImageFile: cnicFile,
+          // The new selfie must match the face on the user's CNIC (cloud
+          // AWS match): the face cut from the CNIC at sign-up, plus the full
+          // CNIC picture when it is available.
+          referenceImageFile: signupCnicFace,
+          fullCnicImageFile: (cnicFile != null && cnicFile != signupCnicFace)
+              ? cnicFile
+              : null,
+          strictCloudMatch: signupCnicFace != null,
+          referenceLabel: 'the photo on your CNIC',
         ),
       ),
     );
@@ -563,6 +552,15 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
     // is final. A second, stricter on-device check here used to reject
     // genuine users ("Biometric mismatch 57%").
 
+    // Older accounts: keep this verified selfie as their reference face.
+    if (signupSelfie == null) {
+      await authService.saveReferenceSelfieIfMissing(
+        user.uid,
+        verificationResult.processedSelfieFile ??
+            verificationResult.selfieFile,
+      );
+    }
+
     // Step 5: Blur ONLY the reporter's own face in the evidence photos, using
     // the selfie they just verified with. Everyone else stays visible.
     List<XFile> filesToUpload = List<XFile>.from(_selectedImages);
@@ -572,14 +570,17 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
         _isLoading = true;
         _loadingMessage = 'Finding your face in photos...';
       });
-      // Pictures of the reporter: the selfie just verified + their CNIC photo.
+      // Pictures of the reporter only: the selfie just verified against
+      // their CNIC, the CNIC face and the sign-up selfie. Only faces matching
+      // these are blurred; everyone else stays visible.
       final references = <File>[
         if (verificationResult.processedSelfieFile != null)
           verificationResult.processedSelfieFile!
         else if (verificationResult.selfieFile != null)
           verificationResult.selfieFile!,
+        ?signupCnicFace,
+        ?signupSelfie,
       ];
-      if (cnicFile != null) references.add(cnicFile);
       final preparedRefs = await OwnerFaceBlur.prepareReferences(references);
       debugPrint(
         '[OwnerBlur] ${preparedRefs.length} reference picture(s) of the reporter',
@@ -601,6 +602,7 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
       ownerBlurredCount = results.where((r) => r.ownerBlurred).length;
     }
 
+    if (!mounted) return;
     final formattedTime = _selectedTime?.format(context) ?? '';
     setState(() {
       _isLoading = true;
@@ -615,7 +617,9 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
         longitude = _pickedLongitude!;
       } else {
         final position = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high,
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+          ),
         );
         latitude = position.latitude;
         longitude = position.longitude;
@@ -624,17 +628,31 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
       List<String> imageUrls = [];
       if (filesToUpload.isNotEmpty) {
         for (final XFile toUpload in filesToUpload) {
-          String? url = await uploadToImgBB(toUpload);
+          final url = await EvidenceStorage.upload(toUpload, user.uid);
           if (url != null) {
             imageUrls.add(url);
           }
+        }
+        final failed = filesToUpload.length - imageUrls.length;
+        if (failed > 0 && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: Colors.orange,
+              content: Text(
+                '$failed photo(s) could not be uploaded. Check the internet '
+                'connection; the report is still being sent.',
+              ),
+            ),
+          );
         }
       }
 
       String? verificationSelfieUrl;
       if (verificationResult.selfieFile != null) {
-        verificationSelfieUrl = await uploadToImgBB(
+        verificationSelfieUrl = await EvidenceStorage.upload(
           XFile(verificationResult.selfieFile!.path),
+          user.uid,
+          folder: 'selfie',
         );
       }
 
@@ -1008,10 +1026,10 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
     _textBeforeDictation = _descriptionController.text.trim();
     setState(() => _dictating = true);
     await _dictation.listen(
-      localeId: _dictationLocale,
-      listenFor: const Duration(minutes: 1),
-      pauseFor: const Duration(seconds: 5),
       listenOptions: stt.SpeechListenOptions(
+        localeId: _dictationLocale,
+        listenFor: const Duration(minutes: 1),
+        pauseFor: const Duration(seconds: 5),
         partialResults: true,
         listenMode: stt.ListenMode.dictation,
       ),

@@ -2,7 +2,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:firebase_storage/firebase_storage.dart';
+
 import '../../services/admin_access.dart';
+import '../../services/auth_service.dart';
 import '../../theme/app_theme.dart';
 import 'admin_widgets.dart';
 
@@ -106,6 +109,135 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     }
   }
 
+  /// Deletes a registry entry (hashed email or CNIC) if it belongs to [uid],
+  /// or unconditionally when [uid] is null.
+  Future<bool> _releaseKey(String key, String? uid) async {
+    final ref = _db.collection('registry').doc(key);
+    final doc = await ref.get();
+    if (!doc.exists) return false;
+    if (uid != null && doc.data()?['uid'] != uid) return false;
+    await ref.delete();
+    return true;
+  }
+
+  /// Removes a citizen's profile, private identity record and CNIC picture,
+  /// and releases their email and CNIC so they can register again. The
+  /// sign-in account itself must be removed in Firebase Authentication.
+  Future<void> _deleteAccount(String uid, Map<String, dynamic> d) async {
+    final email = (d['email'] ?? '').toString();
+    final cnic = (d['cnic'] ?? '').toString();
+    final ok = await adminConfirm(
+      context,
+      title: 'Delete account data',
+      message:
+          'This permanently deletes the profile, identity record and CNIC '
+          'picture of ${email.isEmpty ? uid : email}, and frees their email '
+          'and CNIC for a new registration. Their reports stay in the system.'
+          '\n\nAlso delete the sign-in account in Firebase console → '
+          'Authentication → Users.',
+      confirmLabel: 'Delete permanently',
+      danger: true,
+    );
+    if (!ok) return;
+    try {
+      if (email.isNotEmpty) await _releaseKey(AuthService.emailKey(email), uid);
+      if (cnic.replaceAll(RegExp(r'[^0-9]'), '').isNotEmpty) {
+        await _releaseKey(AuthService.cnicKey(cnic), uid);
+      }
+      final identity = await _db
+          .collection('users')
+          .doc(uid)
+          .collection('identity')
+          .get();
+      for (final doc in identity.docs) {
+        await doc.reference.delete();
+      }
+      final photo = (d['cnicPhotoUrl'] ?? '').toString();
+      if (photo.isNotEmpty) {
+        try {
+          await FirebaseStorage.instance.refFromURL(photo).delete();
+        } catch (_) {}
+      }
+      await _db.collection('users').doc(uid).delete();
+      await AdminAccess.log(
+        'Deleted account data',
+        target: email.isEmpty ? uid : email,
+        details: 'Email and CNIC released',
+      );
+      if (mounted) {
+        adminToast(
+          context,
+          'Account data deleted. Remove the sign-in account in Firebase Authentication.',
+        );
+      }
+    } catch (e) {
+      if (mounted) adminToast(context, adminErrorText(e), error: true);
+    }
+  }
+
+  /// For leftovers without a profile (e.g. a sign-up that stopped half-way
+  /// or a sign-in account deleted in the console): frees an email or CNIC.
+  Future<void> _releaseManually() async {
+    final value = await adminAskText(
+      context,
+      title: 'Release an email or CNIC',
+      label: 'Email address or 13-digit CNIC',
+      confirmLabel: 'Release',
+      maxLines: 1,
+    );
+    if (value == null || value.isEmpty) return;
+    final digits = value.replaceAll(RegExp(r'[^0-9]'), '');
+    final isEmail = value.contains('@');
+    if (!isEmail && digits.length != 13) {
+      if (mounted) {
+        adminToast(context, 'Enter an email or a 13-digit CNIC', error: true);
+      }
+      return;
+    }
+    // Don't release something a current profile still uses.
+    final inUse = await _db
+        .collection('users')
+        .where(
+          isEmail ? 'email' : 'cnic',
+          whereIn: isEmail
+              ? {value.trim(), value.trim().toLowerCase()}.toList()
+              : [
+                  digits,
+                  '${digits.substring(0, 5)}-${digits.substring(5, 12)}-${digits.substring(12)}',
+                ],
+        )
+        .limit(1)
+        .get();
+    if (inUse.docs.isNotEmpty && mounted) {
+      adminToast(
+        context,
+        'This is still used by an existing profile. Use "Delete account data" on that user instead.',
+        error: true,
+      );
+      return;
+    }
+    try {
+      final released = await _releaseKey(
+        isEmail ? AuthService.emailKey(value) : AuthService.cnicKey(digits),
+        null,
+      );
+      await AdminAccess.log(
+        isEmail ? 'Released email' : 'Released CNIC',
+        target: isEmail ? value.trim().toLowerCase() : adminMaskCnic(digits),
+      );
+      if (mounted) {
+        adminToast(
+          context,
+          released
+              ? 'Released. It can be used to register again.'
+              : 'It was not registered.',
+        );
+      }
+    } catch (e) {
+      if (mounted) adminToast(context, adminErrorText(e), error: true);
+    }
+  }
+
   void _details(String uid, Map<String, dynamic> d) {
     showModalBottomSheet(
       context: context,
@@ -126,6 +258,10 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
           Navigator.pop(ctx);
           _unblock(uid, d);
         },
+        onDelete: () {
+          Navigator.pop(ctx);
+          _deleteAccount(uid, d);
+        },
       ),
     );
   }
@@ -136,9 +272,21 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-          child: AdminSearchField(
-            hint: 'Search by name, email, phone or last 4 CNIC digits',
-            onChanged: (v) => setState(() => _query = v.trim()),
+          child: Row(
+            children: [
+              Expanded(
+                child: AdminSearchField(
+                  hint: 'Search by name, email, phone or last 4 CNIC digits',
+                  onChanged: (v) => setState(() => _query = v.trim()),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton.outlined(
+                tooltip: 'Release an email or CNIC',
+                onPressed: _releaseManually,
+                icon: const Icon(Icons.lock_reset),
+              ),
+            ],
           ),
         ),
         SizedBox(
@@ -265,12 +413,14 @@ class _UserDetails extends StatelessWidget {
   final String maskedCnic;
   final VoidCallback onBlock;
   final VoidCallback onUnblock;
+  final VoidCallback onDelete;
   const _UserDetails({
     required this.uid,
     required this.data,
     required this.maskedCnic,
     required this.onBlock,
     required this.onUnblock,
+    required this.onDelete,
   });
 
   Widget _row(String label, String value) => Padding(
@@ -407,6 +557,18 @@ class _UserDetails extends StatelessWidget {
                 'Blocked users keep Emergency SOS but cannot submit reports '
                 'or start Companion Mode.',
                 style: TextStyle(fontSize: 12, color: AppColors.textSubtle),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: TextButton.icon(
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.danger,
+                  ),
+                  onPressed: onDelete,
+                  icon: const Icon(Icons.delete_forever_outlined),
+                  label: const Text('Delete account data and release CNIC'),
+                ),
               ),
             ],
           ),

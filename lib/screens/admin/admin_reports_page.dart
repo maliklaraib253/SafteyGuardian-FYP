@@ -3,8 +3,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../../services/admin_access.dart';
+import '../../services/evidence_storage.dart';
 import '../../theme/app_theme.dart';
 import 'admin_widgets.dart';
+import '../../widgets/evidence_image.dart';
 
 /// Report moderation: reassign cases, flag fake or spam reports, delete
 /// abusive content and (for anonymous reports, with a logged reason) look up
@@ -399,7 +401,7 @@ class _ReportDetailsState extends State<_ReportDetails> {
     }
   }
 
-  Future<void> _delete() async {
+  Future<void> _delete(Map<String, dynamic> r) async {
     final ok = await adminConfirm(
       context,
       title: 'Delete report',
@@ -412,10 +414,25 @@ class _ReportDetailsState extends State<_ReportDetails> {
     );
     if (!ok) return;
     try {
-      await _ref.delete();
+      String? hiddenSelfie;
       try {
-        await _db.collection('report_identity').doc(widget.id).delete();
+        final idRef = _db.collection('report_identity').doc(widget.id);
+        hiddenSelfie = (await idRef.get())
+            .data()?['verificationSelfieUrl']
+            ?.toString();
+        await idRef.delete();
       } catch (_) {}
+      await _ref.delete();
+      // Remove the stored evidence pictures too.
+      final pics = [
+        if (r['images'] is List) ...(r['images'] as List).map((e) => '$e'),
+        if ((r['verificationSelfieUrl'] ?? '').toString().isNotEmpty)
+          r['verificationSelfieUrl'].toString(),
+        ?hiddenSelfie,
+      ];
+      for (final p in pics) {
+        await EvidenceStorage.delete(p);
+      }
       await AdminAccess.log('Deleted report', target: widget.id);
       if (mounted) {
         final messenger = ScaffoldMessenger.of(context);
@@ -620,17 +637,7 @@ class _ReportDetailsState extends State<_ReportDetails> {
                   separatorBuilder: (_, _) => const SizedBox(width: 8),
                   itemBuilder: (_, i) => ClipRRect(
                     borderRadius: BorderRadius.circular(10),
-                    child: Image.network(
-                      images[i],
-                      width: 140,
-                      height: 110,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => Container(
-                        width: 140,
-                        color: AppColors.divider,
-                        child: const Icon(Icons.broken_image),
-                      ),
-                    ),
+                    child: EvidenceImage(images[i], width: 140, height: 110),
                   ),
                 ),
               ),
@@ -708,7 +715,7 @@ class _ReportDetailsState extends State<_ReportDetails> {
                   label: const Text('Block reporter'),
                 ),
                 FilledButton.icon(
-                  onPressed: _delete,
+                  onPressed: () => _delete(r),
                   style: FilledButton.styleFrom(
                     backgroundColor: AppColors.danger,
                   ),

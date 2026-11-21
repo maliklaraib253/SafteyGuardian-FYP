@@ -35,6 +35,13 @@ class LiveFaceVerificationScreen extends StatefulWidget {
   final File? fullCnicImageFile; // Full CNIC image for dual-pass AWS comparison
   final double awsMatchThreshold;
 
+  /// When true, a cloud "no match" can't be overruled by the weaker
+  /// on-device score (used when verifying against the sign-up selfie).
+  final bool strictCloudMatch;
+
+  /// What the reference picture is, for messages ("your CNIC photograph").
+  final String referenceLabel;
+
   const LiveFaceVerificationScreen({
     super.key,
     this.title = 'Live Identity Verification',
@@ -43,6 +50,8 @@ class LiveFaceVerificationScreen extends StatefulWidget {
     this.referenceImageFile,
     this.fullCnicImageFile,
     this.awsMatchThreshold = 65.0,
+    this.strictCloudMatch = false,
+    this.referenceLabel = 'the CNIC photograph',
   });
 
   @override
@@ -324,9 +333,11 @@ class _LiveFaceVerificationScreenState extends State<LiveFaceVerificationScreen>
           // 1. AWS Rekognition similarity >= threshold (65%), OR
           // 2. AWS shows strong correlation (>= 55%) AND on-device features agree (>= 0.50), OR
           // 3. On-device biometrics independently verifies (>= 0.65)
-          final bool isConfirmed = awsResult.isMatch ||
-              (awsResult.similarity >= 55.0 && localScore >= 0.50) ||
-              (localScore >= FaceVerificationConfig.matchThreshold);
+          final bool isConfirmed = widget.strictCloudMatch
+              ? awsResult.isMatch
+              : awsResult.isMatch ||
+                    (awsResult.similarity >= 55.0 && localScore >= 0.50) ||
+                    (localScore >= FaceVerificationConfig.matchThreshold);
 
           if (isConfirmed) {
             final effectiveSim = awsResult.similarity > 0
@@ -342,7 +353,7 @@ class _LiveFaceVerificationScreenState extends State<LiveFaceVerificationScreen>
           } else {
             _verificationFailed(
               'Face does not match ❌',
-              'Selfie does not match the CNIC photograph (${awsResult.similarity.toStringAsFixed(1)}% similarity). Retake the photo in good lighting, looking straight at the camera.',
+              'Selfie does not match ${widget.referenceLabel} (${awsResult.similarity.toStringAsFixed(1)}% similarity). Retake the photo in good lighting, looking straight at the camera.',
             );
           }
           return;

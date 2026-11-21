@@ -25,7 +25,6 @@ class _EmergencySOSScreenState extends State<EmergencySOSScreen>
     with SingleTickerProviderStateMixin {
   // Animation for SOS button
   late AnimationController _pulseAnimation;
-  late Animation<double> _pulseScale;
 
   // State variables - ONLY ONE sosService
   final SosService _sosService = SosService();
@@ -59,10 +58,6 @@ class _EmergencySOSScreenState extends State<EmergencySOSScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     )..repeat(reverse: true);
-
-    _pulseScale = Tween<double>(begin: 1.0, end: 1.2).animate(
-      CurvedAnimation(parent: _pulseAnimation, curve: Curves.easeInOut),
-    );
 
     _refreshContactsFromService();
   }

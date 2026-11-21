@@ -62,7 +62,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
         }
       }
     } catch (e) {
-      print('Error checking verification: $e');
+      debugPrint('Error checking verification: $e');
     } finally {
       if (mounted) setState(() => _isChecking = false);
     }

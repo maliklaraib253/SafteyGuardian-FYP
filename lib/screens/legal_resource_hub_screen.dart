@@ -236,7 +236,7 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
       'title': 'Palm strike',
       'level': 'Beginner',
       'icon': Iconsax.flash_1,
-      'query': 'palm strike self defense for women',
+      'videoId': 'Zwr9s1Sb_so',
       'steps': [
         'Stand side-on, feet shoulder-width apart, hands up near your face.',
         'Bend your wrist back and keep your fingers pulled in.',
@@ -248,7 +248,7 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
       'title': 'Escape a wrist grab',
       'level': 'Beginner',
       'icon': Iconsax.arrow_swap_horizontal,
-      'query': 'escape wrist grab self defense',
+      'videoId': 'gJ_Vq6P8ccc',
       'steps': [
         "Don't pull straight back: find the gap between their thumb and fingers.",
         'Turn your wrist towards their thumb.',
@@ -260,7 +260,7 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
       'title': 'Defense against a choke',
       'level': 'Intermediate',
       'icon': Iconsax.shield_cross,
-      'query': 'front choke escape self defense women',
+      'videoId': '-yFzyCDzC4I',
       'steps': [
         'Tuck your chin down to protect your throat.',
         'Raise one arm straight up and turn your body sharply to that side.',
@@ -272,7 +272,7 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
       'title': 'Using everyday objects',
       'level': 'Beginner',
       'icon': Iconsax.key,
-      'query': 'everyday objects self defense keys bag',
+      'videoId': 'YEIeDXxMPNE',
       'steps': [
         'Keep keys, a pen or a phone in your hand when walking alone.',
         'Hold keys firmly in a fist, one key sticking out from the side.',
@@ -284,7 +284,7 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
       'title': 'Getting up from the ground',
       'level': 'Advanced',
       'icon': Iconsax.arrow_up_3,
-      'query': 'ground self defense technical stand up',
+      'videoId': 'nJ-uKYcdvDg',
       'steps': [
         'Stay on your back, knees bent, feet towards the attacker.',
         'Kick at their knees or shins if they come close.',
@@ -296,7 +296,7 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
       'title': 'Escape a bear hug',
       'level': 'Intermediate',
       'icon': Iconsax.user_remove,
-      'query': 'bear hug escape self defense',
+      'videoId': 'E3PWY6xX1tQ',
       'steps': [
         'Drop your weight by bending your knees so you are harder to lift.',
         'Stamp on their foot or kick back at their shin.',
@@ -355,14 +355,13 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
           });
         }
         for (final v in videos) {
-          final url = (v['url'] ?? '').toString();
-          if (url.isEmpty) continue;
+          final id = _youtubeId((v['url'] ?? '').toString());
+          if (id == null) continue;
           _selfDefenseVideos.add({
             'title': (v['title'] ?? '').toString(),
             'level': (v['level'] ?? 'Beginner').toString(),
             'icon': Iconsax.video,
-            // A full link opens that exact video (see _openYouTube).
-            'query': url,
+            'videoId': id,
             'steps': (v['steps'] is List)
                 ? (v['steps'] as List).map((e) => e.toString()).toList()
                 : <String>[],
@@ -372,6 +371,26 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
     } catch (e) {
       debugPrint('[LegalHub] admin content not loaded: $e');
     }
+  }
+
+  /// Video id from a YouTube link (watch?v=, youtu.be/, shorts/, embed/).
+  static String? _youtubeId(String url) {
+    final uri = Uri.tryParse(url.trim());
+    if (uri == null) return null;
+    String? id;
+    if (uri.host.contains('youtu.be')) {
+      id = uri.pathSegments.isNotEmpty ? uri.pathSegments.first : null;
+    } else if (uri.queryParameters['v'] != null) {
+      id = uri.queryParameters['v'];
+    } else {
+      final segs = uri.pathSegments;
+      final k = segs.indexWhere((s) => s == 'shorts' || s == 'embed');
+      if (k >= 0 && k + 1 < segs.length) id = segs[k + 1];
+    }
+    if (id == null || !RegExp(r'^[A-Za-z0-9_-]{6,20}$').hasMatch(id)) {
+      return null;
+    }
+    return id;
   }
 
   @override
@@ -793,7 +812,7 @@ Rules:
           borderRadius: BorderRadius.circular(AppRadius.xl),
           child: InkWell(
             borderRadius: BorderRadius.circular(AppRadius.xl),
-            onTap: () => _openYouTube('self defense basics for women'),
+            onTap: () => _openYouTube(_featuredVideoId),
             child: Padding(
               padding: const EdgeInsets.all(20),
               child: Row(
@@ -848,7 +867,7 @@ Rules:
         ),
         const SizedBox(height: 4),
         const Text(
-          'Tap one to see the steps. Videos open in YouTube.',
+          'Tap one to see the steps and watch the video.',
           style: TextStyle(fontSize: 12.5, color: AppColors.textMuted),
         ),
         const SizedBox(height: 12),
@@ -912,67 +931,119 @@ Rules:
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
         onTap: () => _showTechnique(v),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _videoThumb(v['videoId'] as String, radiusTop: 16),
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      color: AppColors.primarySoft,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Icon(
-                      v['icon'] as IconData,
-                      size: 20,
-                      color: AppColors.primary,
+                  Row(
+                    children: [
+                      Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          color: AppColors.primarySoft,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(
+                          v['icon'] as IconData,
+                          size: 20,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                      const Spacer(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: bg,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          level,
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w600,
+                            color: fg,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    v['title'] as String,
+                    maxLines: 2,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      height: 1.3,
                     ),
                   ),
-                  const Spacer(),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: bg,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      level,
-                      style: TextStyle(
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w600,
-                        color: fg,
-                      ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${(v['steps'] as List).length} steps',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textMuted,
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
-              Text(
-                v['title'] as String,
-                maxLines: 2,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  height: 1.3,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _videoThumb(
+    String id, {
+    double radiusTop = 0,
+    double radiusBottom = 0,
+    double height = 96,
+  }) {
+    return ClipRRect(
+      borderRadius: BorderRadius.vertical(
+        top: Radius.circular(radiusTop),
+        bottom: Radius.circular(radiusBottom),
+      ),
+      child: SizedBox(
+        height: height,
+        width: double.infinity,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.network(
+              _thumb(id),
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => Container(
+                color: AppColors.primarySoft,
+                child: const Icon(Iconsax.video, color: AppColors.primary),
+              ),
+            ),
+            Center(
+              child: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.55),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.play_arrow,
+                  color: Colors.white,
+                  size: 26,
                 ),
               ),
-              const SizedBox(height: 4),
-              Text(
-                '${(v['steps'] as List).length} steps',
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: AppColors.textMuted,
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -1001,6 +1072,19 @@ Rules:
                 ),
               ),
               const SizedBox(height: 16),
+              GestureDetector(
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _openYouTube(v['videoId'] as String);
+                },
+                child: _videoThumb(
+                  v['videoId'] as String,
+                  radiusTop: 14,
+                  radiusBottom: 14,
+                  height: 170,
+                ),
+              ),
+              const SizedBox(height: 14),
               Text(
                 v['title'] as String,
                 style: const TextStyle(
@@ -1044,10 +1128,10 @@ Rules:
                 child: FilledButton.icon(
                   onPressed: () {
                     Navigator.pop(ctx);
-                    _openYouTube(v['query'] as String);
+                    _openYouTube(v['videoId'] as String);
                   },
                   icon: const Icon(Icons.play_circle_outline),
-                  label: const Text('Watch on YouTube'),
+                  label: const Text('Watch video'),
                 ),
               ),
             ],
@@ -1057,24 +1141,37 @@ Rules:
     );
   }
 
-  /// Opens YouTube (app if installed, otherwise the browser) with tutorial
-  /// videos for [query].
-  Future<void> _openYouTube(String query) async {
-    // Admin-published items carry a full video link; built-in ones a search.
-    final uri = query.startsWith('http')
-        ? Uri.parse(query)
-        : Uri.parse(
-            'https://www.youtube.com/results?search_query=${Uri.encodeQueryComponent(query)}',
-          );
-    var ok = false;
-    try {
-      ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } catch (_) {}
-    if (!ok && mounted) {
+  static const String _featuredVideoId = 'OIe6qInB8zg';
+
+  static String _thumb(String id) =>
+      'https://img.youtube.com/vi/$id/hqdefault.jpg';
+
+  /// Plays a YouTube video: YouTube app first, then the browser.
+  Future<void> _openYouTube(String videoId) async {
+    final candidates = [
+      (
+        Uri.parse('vnd.youtube:$videoId'),
+        LaunchMode.externalNonBrowserApplication,
+      ),
+      (
+        Uri.parse('https://www.youtube.com/watch?v=$videoId'),
+        LaunchMode.externalApplication,
+      ),
+      (
+        Uri.parse('https://www.youtube.com/watch?v=$videoId'),
+        LaunchMode.platformDefault,
+      ),
+    ];
+    for (final (uri, mode) in candidates) {
+      try {
+        if (await launchUrl(uri, mode: mode)) return;
+      } catch (_) {}
+    }
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            "Couldn't open YouTube. Check your internet connection.",
+            "Couldn't open the video. Check your internet connection.",
           ),
         ),
       );
@@ -1516,38 +1613,6 @@ Rules:
           );
         },
       ),
-    );
-  }
-
-  Widget _buildTipRow({
-    required IconData icon,
-    required String title,
-    required String description,
-  }) {
-    return Row(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: const Color(0xFF1D4ED8).withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(icon, color: const Color(0xFF1D4ED8), size: 16),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-              Text(
-                description,
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-              ),
-            ],
-          ),
-        ),
-      ],
     );
   }
 }

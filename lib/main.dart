@@ -68,13 +68,16 @@ class SafetyGuardianApp extends StatelessWidget {
 
                   // Police: a @police.gov.pk email that an admin approved
                   // (police_officers/{email} in Firestore). No other check.
+                  // Watched live: approval opens the dashboard at once, and
+                  // removal by an admin closes it at once.
                   if (PoliceAccess.hasPoliceEmail(user)) {
-                    return FutureBuilder<bool>(
-                      future: PoliceAccess.isApprovedOfficer(user),
+                    return StreamBuilder<bool>(
+                      stream: PoliceAccess.watchApproval(user),
                       builder: (context, approved) {
-                        if (approved.connectionState != ConnectionState.done) {
-                          return const BrandSplash();
+                        if (approved.hasError) {
+                          return const _PoliceNotApprovedScreen();
                         }
+                        if (!approved.hasData) return const BrandSplash();
                         if (approved.data != true) {
                           return const _PoliceNotApprovedScreen();
                         }

@@ -38,4 +38,20 @@ class PoliceAccess {
   }
 
   static void clearCache() => _approved.clear();
+
+  /// Live approval status: emits true/false whenever an admin approves or
+  /// removes this officer.
+  static Stream<bool> watchApproval(User user) {
+    final email = user.email;
+    if (email == null || !hasPoliceEmail(user)) return Stream.value(false);
+    final key = email.trim().toLowerCase();
+    return FirebaseFirestore.instance
+        .collection('police_officers')
+        .doc(key)
+        .snapshots()
+        .map((doc) {
+          _approved[key] = doc.exists;
+          return doc.exists;
+        });
+  }
 }

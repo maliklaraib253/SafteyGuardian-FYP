@@ -446,10 +446,10 @@ class VoiceDistressService {
       await _speech.listen(
         onResult: (result) => _handleWords(result.recognizedWords),
         onSoundLevelChange: _handleSoundLevel,
-        localeId: _localeId,
-        listenFor: const Duration(minutes: 1),
-        pauseFor: const Duration(seconds: 30),
         listenOptions: stt.SpeechListenOptions(
+          localeId: _localeId,
+          listenFor: const Duration(minutes: 1),
+          pauseFor: const Duration(seconds: 30),
           listenMode: stt.ListenMode.dictation,
           partialResults: true,
           cancelOnError: false,
@@ -554,10 +554,10 @@ class VoiceDistressService {
       await _speech.listen(
         onResult: (result) => _handleWords(result.recognizedWords),
         onSoundLevelChange: _handleSoundLevel,
-        localeId: _localeId,
-        listenFor: const Duration(seconds: 6),
-        pauseFor: const Duration(seconds: 3),
         listenOptions: stt.SpeechListenOptions(
+          localeId: _localeId,
+          listenFor: const Duration(seconds: 6),
+          pauseFor: const Duration(seconds: 3),
           listenMode: stt.ListenMode.confirmation,
           partialResults: true,
           cancelOnError: true,

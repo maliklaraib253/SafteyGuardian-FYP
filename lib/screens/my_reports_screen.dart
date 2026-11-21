@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../services/routing_service.dart';
+import '../widgets/evidence_image.dart';
 
 /// Lists the signed-in citizen's own incident reports with live status updates.
 class MyReportsScreen extends StatefulWidget {
@@ -503,17 +504,7 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
                   separatorBuilder: (_, _) => const SizedBox(width: 8),
                   itemBuilder: (_, i) => ClipRRect(
                     borderRadius: BorderRadius.circular(10),
-                    child: Image.network(
-                      images[i],
-                      width: 110,
-                      height: 110,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => Container(
-                        width: 110,
-                        color: Colors.grey.shade200,
-                        child: const Icon(Icons.broken_image),
-                      ),
-                    ),
+                    child: EvidenceImage(images[i], width: 110, height: 110),
                   ),
                 ),
               ),
