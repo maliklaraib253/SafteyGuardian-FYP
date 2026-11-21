@@ -1,0 +1,360 @@
+package com.example.safety_guardian
+
+import android.Manifest
+import android.app.Activity
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.media.AudioManager
+import android.net.Uri
+import android.os.Bundle
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import android.provider.CallLog
+import android.telecom.PhoneAccountHandle
+import android.telecom.TelecomManager
+import android.telephony.SmsManager
+import android.telephony.SubscriptionManager
+import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
+
+/**
+ * Launcher activity for SafetyGuardian.
+ *
+ * Lives in android/app/src/sg (added as an extra source dir in app/build.gradle.kts)
+ * and replaces MainActivity in AndroidManifest.xml. It exposes two channels:
+ *  - com.safetyguardian/app_control : bringToFront (used by Distress Detection)
+ *  - com.safetyguardian/call_guard  : endCall / canEndCall (auto-reject during SOS),
+ *                                     setBeepMuted (silent voice-distress monitoring)
+ *  - com.safetyguardian/sms         : sendSms (SOS texts, dual-SIM aware, reports
+ *                                     whether the network accepted the message)
+ */
+class SafetyGuardianActivity : FlutterActivity() {
+
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        val messenger = flutterEngine.dartExecutor.binaryMessenger
+
+        MethodChannel(messenger, "com.safetyguardian/app_control").setMethodCallHandler { call, result ->
+            when (call.method) {
+                "bringToFront" -> {
+                    bringToFront()
+                    result.success(true)
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(messenger, "com.safetyguardian/call_guard").setMethodCallHandler { call, result ->
+            when (call.method) {
+                "canEndCall" -> result.success(canEndCall())
+                "endCall" -> result.success(endCall())
+                "setBeepMuted" -> {
+                    setBeepMuted(call.argument<Boolean>("muted") ?: false)
+                    result.success(true)
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(messenger, "com.safetyguardian/sms").setMethodCallHandler { call, result ->
+            when (call.method) {
+                "sendSms" -> {
+                    val phone = call.argument<String>("phone") ?: ""
+                    val message = call.argument<String>("message") ?: ""
+                    sendSms(phone, message) { ok, error ->
+                        result.success(mapOf("ok" to ok, "error" to error))
+                    }
+                }
+                "call" -> {
+                    val phone = call.argument<String>("phone") ?: ""
+                    result.success(placeCall(phone))
+                }
+                "isInCall" -> result.success(isInCall())
+                "lastCallDuration" -> {
+                    val phone = call.argument<String>("phone") ?: ""
+                    val since = (call.argument<Number>("since") ?: 0).toLong()
+                    result.success(lastOutgoingCallDuration(phone, since))
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    private var smsRequestCode = 1000
+
+    /**
+     * Sends an SMS automatically, with no user interaction.
+     * Tries the default SMS SIM first, then every other active SIM, so it
+     * still works when the phone is set to "Ask every time" or one SIM has
+     * no balance/signal. [done] gets (sent, lastError).
+     */
+    private fun sendSms(phone: String, message: String, done: (Boolean, String?) -> Unit) {
+        if (phone.isBlank() || message.isBlank()) {
+            done(false, "empty phone or message"); return
+        }
+        if (checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
+            done(false, "SMS permission not granted"); return
+        }
+        val managers = try {
+            smsManagersToTry()
+        } catch (e: Exception) {
+            done(false, "no SIM available: ${e.message}"); return
+        }
+        if (managers.isEmpty()) {
+            done(false, "no SIM available"); return
+        }
+
+        fun attempt(index: Int, lastError: String?) {
+            if (index >= managers.size) {
+                done(false, lastError); return
+            }
+            sendWith(managers[index], phone, message) { ok, error ->
+                if (ok) done(true, null) else attempt(index + 1, error)
+            }
+        }
+        attempt(0, null)
+    }
+
+    private fun sendWith(
+        manager: SmsManager,
+        phone: String,
+        message: String,
+        done: (Boolean, String?) -> Unit
+    ) {
+        val action = "com.safetyguardian.SMS_SENT_" + (smsRequestCode++)
+        val handler = Handler(Looper.getMainLooper())
+        var finished = false
+        lateinit var receiver: BroadcastReceiver
+
+        fun finish(ok: Boolean, error: String?) {
+            if (finished) return
+            finished = true
+            Log.i("SG_SMS", "SMS to $phone -> ok=$ok error=$error")
+            try { unregisterReceiver(receiver) } catch (_: Exception) {}
+            done(ok, error)
+        }
+
+        receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                when (resultCode) {
+                    Activity.RESULT_OK -> finish(true, null)
+                    SmsManager.RESULT_ERROR_NO_SERVICE -> finish(false, "no mobile signal")
+                    SmsManager.RESULT_ERROR_RADIO_OFF -> finish(false, "airplane mode / radio off")
+                    SmsManager.RESULT_ERROR_NULL_PDU -> finish(false, "message could not be encoded")
+                    else -> finish(false, "send failed (code $resultCode) - check SMS balance")
+                }
+            }
+        }
+        val filter = IntentFilter(action)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(receiver, filter)
+        }
+
+        val flags = PendingIntent.FLAG_ONE_SHOT or
+            (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+        val sentIntent = PendingIntent.getBroadcast(
+            this, smsRequestCode, Intent(action).setPackage(packageName), flags
+        )
+
+        try {
+            val parts = manager.divideMessage(message)
+            if (parts.size > 1) {
+                val sent = ArrayList<PendingIntent?>()
+                sent.add(sentIntent)
+                for (i in 1 until parts.size) sent.add(null)
+                manager.sendMultipartTextMessage(phone, null, parts, sent, null)
+            } else {
+                manager.sendTextMessage(phone, null, message, sentIntent, null)
+            }
+        } catch (e: Exception) {
+            Log.e("SG_SMS", "sendTextMessage threw", e)
+            finish(false, "send error: ${e.javaClass.simpleName}: ${e.message}")
+            return
+        }
+
+        // Some ROMs never report back; assume it went out after 20 s.
+        handler.postDelayed({
+            Log.w("SG_SMS", "No sent-report for $phone after 20 s (ROM did not confirm)")
+            finish(true, null)
+        }, 20000)
+    }
+
+    /**
+     * Places a phone call straight away through the SIM Android would use
+     * (default calling SIM, or the first SIM that can make calls when the
+     * phone is set to "Ask every time"). Returns null on success or an error.
+     */
+    @Suppress("MissingPermission")
+    private fun placeCall(phone: String): String? {
+        if (phone.isBlank()) return "empty phone number"
+        if (checkSelfPermission(Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
+            return "call permission not granted"
+        }
+        val uri = Uri.fromParts("tel", phone, null)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            return try {
+                val telecom = getSystemService(Context.TELECOM_SERVICE) as TelecomManager
+                var account: PhoneAccountHandle? = telecom.getDefaultOutgoingPhoneAccount("tel")
+                if (account == null &&
+                    checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED
+                ) {
+                    account = telecom.callCapablePhoneAccounts.firstOrNull()
+                }
+                val extras = Bundle()
+                if (account != null) {
+                    extras.putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, account)
+                }
+                telecom.placeCall(uri, extras)
+                null
+            } catch (e: Exception) {
+                callWithIntent(uri)
+            }
+        }
+        return callWithIntent(uri)
+    }
+
+    /** True while any call (ringing, dialling or talking) is in progress. */
+    @Suppress("MissingPermission")
+    private fun isInCall(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false
+        if (checkSelfPermission(Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
+            return false
+        }
+        return try {
+            (getSystemService(Context.TELECOM_SERVICE) as TelecomManager).isInCall
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Talk time in seconds of the latest outgoing call to [phone] placed after
+     * [since] (epoch ms). 0 = not answered, -1 = unknown (no call-log access or
+     * no matching entry yet).
+     */
+    private fun lastOutgoingCallDuration(phone: String, since: Long): Int {
+        if (checkSelfPermission(Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED) {
+            return -1
+        }
+        val wanted = phone.filter { it.isDigit() }.takeLast(10)
+        if (wanted.isEmpty()) return -1
+        return try {
+            contentResolver.query(
+                CallLog.Calls.CONTENT_URI,
+                arrayOf(CallLog.Calls.NUMBER, CallLog.Calls.DURATION),
+                "${CallLog.Calls.TYPE} = ? AND ${CallLog.Calls.DATE} >= ?",
+                arrayOf(CallLog.Calls.OUTGOING_TYPE.toString(), (since - 5000).toString()),
+                "${CallLog.Calls.DATE} DESC"
+            )?.use { c ->
+                while (c.moveToNext()) {
+                    val number = (c.getString(0) ?: "").filter { it.isDigit() }.takeLast(10)
+                    if (number == wanted) return@use c.getInt(1)
+                }
+                -1
+            } ?: -1
+        } catch (e: Exception) {
+            -1
+        }
+    }
+
+    private fun callWithIntent(uri: Uri): String? {
+        return try {
+            startActivity(Intent(Intent.ACTION_CALL, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            null
+        } catch (e: Exception) {
+            "call failed: ${e.message}"
+        }
+    }
+
+    /** Default SMS SIM first, then every other active SIM. */
+    @Suppress("DEPRECATION")
+    private fun smsManagersToTry(): List<SmsManager> {
+        val ids = LinkedHashSet<Int>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            val def = SubscriptionManager.getDefaultSmsSubscriptionId()
+            if (def != SubscriptionManager.INVALID_SUBSCRIPTION_ID) ids.add(def)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1 &&
+            checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED
+        ) {
+            try {
+                getSystemService(SubscriptionManager::class.java)
+                    ?.activeSubscriptionInfoList
+                    ?.forEach { ids.add(it.subscriptionId) }
+            } catch (_: SecurityException) {}
+        }
+        if (ids.isEmpty() || Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) {
+            return listOf(
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+                    getSystemService(SmsManager::class.java)
+                else SmsManager.getDefault()
+            )
+        }
+        return ids.map { id ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+                getSystemService(SmsManager::class.java).createForSubscriptionId(id)
+            else SmsManager.getSmsManagerForSubscriptionId(id)
+        }
+    }
+
+    private fun bringToFront() {
+        val intent = Intent(this, SafetyGuardianActivity::class.java).apply {
+            addFlags(
+                Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+            )
+        }
+        startActivity(intent)
+    }
+
+    /**
+     * Mutes the streams Android's SpeechRecognizer uses for its start/stop
+     * beep, so continuous voice-distress monitoring stays silent.
+     */
+    private fun setBeepMuted(muted: Boolean) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val direction = if (muted) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE
+        for (stream in intArrayOf(
+            AudioManager.STREAM_MUSIC,
+            AudioManager.STREAM_SYSTEM,
+            AudioManager.STREAM_NOTIFICATION
+        )) {
+            try {
+                audio.adjustStreamVolume(stream, direction, 0)
+            } catch (e: Exception) {
+                // Do-Not-Disturb can block notification stream changes; ignore.
+            }
+        }
+    }
+
+    private fun canEndCall(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return false
+        return checkSelfPermission(Manifest.permission.ANSWER_PHONE_CALLS) ==
+            PackageManager.PERMISSION_GRANTED
+    }
+
+    @Suppress("DEPRECATION")
+    private fun endCall(): Boolean {
+        if (!canEndCall()) return false
+        return try {
+            val telecom = getSystemService(Context.TELECOM_SERVICE) as TelecomManager
+            telecom.endCall()
+        } catch (e: SecurityException) {
+            false
+        } catch (e: Exception) {
+            false
+        }
+    }
+}

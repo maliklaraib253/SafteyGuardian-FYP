@@ -1,0 +1,31 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Biometric and CNIC Identity storage
+    // ONLY the specific UID can read or upload their private identity documents.
+    // Public reads or cross-user access are strictly prohibited.
+    match /users/{userId}/identity/{allPaths=**} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Incident report evidence images
+    match /reports/{userId}/{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(userId);
+    }
+
+    // Fallback: deny all unauthenticated or unmanaged paths
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
