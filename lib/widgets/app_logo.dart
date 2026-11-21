@@ -124,36 +124,43 @@ class BrandSplash extends StatelessWidget {
     return const Scaffold(
       backgroundColor: AppColors.primary,
       body: SafeArea(
-        child: Column(
-          children: [
-            Spacer(),
-            AppLogo(size: 128),
-            SizedBox(height: 24),
-            Text(
-              'Safety Guardian',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 25,
-                fontWeight: FontWeight.w700,
-                letterSpacing: -0.3,
+        // Full width so everything is centred horizontally on every screen.
+        child: SizedBox(
+          width: double.infinity,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Spacer(),
+              AppLogo(size: 128),
+              SizedBox(height: 24),
+              Text(
+                'Safety Guardian',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 25,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.3,
+                ),
               ),
-            ),
-            SizedBox(height: 6),
-            Text(
-              'Your safety, one tap away',
-              style: TextStyle(color: Color(0xBFFFFFFF), fontSize: 13.5),
-            ),
-            Spacer(),
-            SizedBox(
-              width: 22,
-              height: 22,
-              child: CircularProgressIndicator(
-                strokeWidth: 2.2,
-                color: Colors.white,
+              SizedBox(height: 6),
+              Text(
+                'Your safety, one tap away',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Color(0xBFFFFFFF), fontSize: 13.5),
               ),
-            ),
-            SizedBox(height: 40),
-          ],
+              Spacer(),
+              SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.2,
+                  color: Colors.white,
+                ),
+              ),
+              SizedBox(height: 40),
+            ],
+          ),
         ),
       ),
     );
