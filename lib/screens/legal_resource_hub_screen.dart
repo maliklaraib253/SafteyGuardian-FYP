@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:iconsax/iconsax.dart';
 import 'package:flutter/services.dart';
@@ -309,6 +310,68 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _loadAdminContent();
+  }
+
+  /// Guides and videos published from the admin portal
+  /// (app_content/legal_hub), shown after the built-in items.
+  Future<void> _loadAdminContent() async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('app_content')
+          .doc('legal_hub')
+          .get();
+      final data = doc.data();
+      if (data == null || !mounted) return;
+      final guides = (data['guides'] is List)
+          ? (data['guides'] as List).whereType<Map>().toList()
+          : <Map>[];
+      final videos = (data['videos'] is List)
+          ? (data['videos'] as List).whereType<Map>().toList()
+          : <Map>[];
+      const colors = {
+        'Rights': Colors.green,
+        'Complaints': Colors.orange,
+        'Self-Defense': Colors.purple,
+        'Evidence': Colors.red,
+        'Laws': Colors.teal,
+      };
+      setState(() {
+        for (final g in guides) {
+          final category = (g['category'] ?? 'Laws').toString();
+          final points = (g['points'] is List)
+              ? (g['points'] as List).map((e) => e.toString()).toList()
+              : <String>[];
+          _legalResources.add({
+            'title': (g['title'] ?? '').toString(),
+            'category': category,
+            'description': (g['description'] ?? '').toString(),
+            'icon': Iconsax.document_text,
+            'color': colors[category] ?? Colors.teal,
+            'content': points.map((p) => '• $p').join('\n'),
+            'steps': (g['steps'] is List)
+                ? (g['steps'] as List).map((e) => e.toString()).toList()
+                : <String>[],
+          });
+        }
+        for (final v in videos) {
+          final url = (v['url'] ?? '').toString();
+          if (url.isEmpty) continue;
+          _selfDefenseVideos.add({
+            'title': (v['title'] ?? '').toString(),
+            'level': (v['level'] ?? 'Beginner').toString(),
+            'icon': Iconsax.video,
+            // A full link opens that exact video (see _openYouTube).
+            'query': url,
+            'steps': (v['steps'] is List)
+                ? (v['steps'] as List).map((e) => e.toString()).toList()
+                : <String>[],
+          });
+        }
+      });
+    } catch (e) {
+      debugPrint('[LegalHub] admin content not loaded: $e');
+    }
   }
 
   @override
@@ -997,9 +1060,12 @@ Rules:
   /// Opens YouTube (app if installed, otherwise the browser) with tutorial
   /// videos for [query].
   Future<void> _openYouTube(String query) async {
-    final uri = Uri.parse(
-      'https://www.youtube.com/results?search_query=${Uri.encodeQueryComponent(query)}',
-    );
+    // Admin-published items carry a full video link; built-in ones a search.
+    final uri = query.startsWith('http')
+        ? Uri.parse(query)
+        : Uri.parse(
+            'https://www.youtube.com/results?search_query=${Uri.encodeQueryComponent(query)}',
+          );
     var ok = false;
     try {
       ok = await launchUrl(uri, mode: LaunchMode.externalApplication);

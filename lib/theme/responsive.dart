@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../services/admin_access.dart';
 import 'app_theme.dart';
 
 /// Breakpoints (logical pixels) used across the app.
@@ -81,34 +82,40 @@ class ResponsiveAppShell extends StatelessWidget {
 
     return MediaQuery(
       data: clamped,
-      child: StreamBuilder<User?>(
-        stream: FirebaseAuth.instance.authStateChanges(),
-        builder: (context, snapshot) {
-          final isPolice =
-              snapshot.data?.email?.contains('@police.gov.pk') == true;
-          final maxWidth = isPolice
-              ? Breakpoints.policeMaxWidth
-              : Breakpoints.citizenMaxWidth;
-          final screenWidth = clamped.size.width;
-          if (screenWidth <= maxWidth) return child;
+      child: ValueListenableBuilder<Set<String>>(
+        valueListenable: AdminAccess.knownAdmins,
+        builder: (context, _, _) => StreamBuilder<User?>(
+          stream: FirebaseAuth.instance.authStateChanges(),
+          builder: (context, snapshot) {
+            final email = snapshot.data?.email;
+            // Police and admins get the wide canvas for their dashboards.
+            final isPolice =
+                email?.contains('@police.gov.pk') == true ||
+                AdminAccess.isKnownAdmin(email);
+            final maxWidth = isPolice
+                ? Breakpoints.policeMaxWidth
+                : Breakpoints.citizenMaxWidth;
+            final screenWidth = clamped.size.width;
+            if (screenWidth <= maxWidth) return child;
 
-          return ColoredBox(
-            color: AppColors.border,
-            child: Center(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: maxWidth),
-                child: MediaQuery(
-                  // Screens inside see the column width, so their own
-                  // breakpoints (grid columns, rails) react correctly.
-                  data: clamped.copyWith(
-                    size: Size(maxWidth, clamped.size.height),
+            return ColoredBox(
+              color: AppColors.border,
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: maxWidth),
+                  child: MediaQuery(
+                    // Screens inside see the column width, so their own
+                    // breakpoints (grid columns, rails) react correctly.
+                    data: clamped.copyWith(
+                      size: Size(maxWidth, clamped.size.height),
+                    ),
+                    child: ClipRect(child: child),
                   ),
-                  child: ClipRect(child: child),
                 ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }

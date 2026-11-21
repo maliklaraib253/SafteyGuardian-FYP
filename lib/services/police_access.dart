@@ -27,7 +27,7 @@ class PoliceAccess {
     try {
       final doc = await FirebaseFirestore.instance
           .collection('police_officers')
-          .doc(email)
+          .doc(email.trim().toLowerCase())
           .get();
       _approved[email] = doc.exists;
       return doc.exists;

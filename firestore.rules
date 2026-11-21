@@ -11,14 +11,44 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    // Police = a @police.gov.pk email that an admin has approved by adding
-    // a document police_officers/{email} in the Firebase console.
+    // Police = a @police.gov.pk email that an admin has approved (document
+    // police_officers/{email}, created from the admin portal).
     // (Just owning an address that ends in @police.gov.pk is not enough.)
     function isPolice() {
       return isAuthenticated()
         && request.auth.token.email != null
-        && request.auth.token.email.matches('.*@police[.]gov[.]pk$')
-        && exists(/databases/$(database)/documents/police_officers/$(request.auth.token.email));
+        && request.auth.token.email.lower().matches('.*@police[.]gov[.]pk$')
+        && exists(/databases/$(database)/documents/police_officers/$(request.auth.token.email.lower()));
+    }
+
+    // Admin = an account listed in admins/{email} (lower case). The first
+    // admin is added once in the Firebase console.
+    function isAdmin() {
+      return isAuthenticated()
+        && request.auth.token.email != null
+        && exists(/databases/$(database)/documents/admins/$(request.auth.token.email.lower()));
+    }
+
+    function myEmail() {
+      return request.auth.token.email.lower();
+    }
+
+    // A citizen blocked by an admin (users/{uid}.blocked == true).
+    function isBlocked() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('blocked', false) == true;
+    }
+
+    // Fields only an admin may set on a user profile.
+    function touchesBlockFields() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['blocked', 'blockedReason', 'blockedAt', 'blockedBy']);
+    }
+
+    // Fields only an admin may set on a report.
+    function touchesModerationFields() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['moderation', 'moderationReason', 'moderatedBy', 'moderatedAt']);
     }
 
     // Fields only police may change on a report.
@@ -29,18 +59,55 @@ service cloud.firestore {
                  'assignedTo', 'assignedAt']);
     }
 
-    // Approved officers. Managed by an admin in the Firebase console only.
-    match /police_officers/{email} {
-      allow read: if isAuthenticated() && request.auth.token.email == email;
+    // Admin accounts. Added in the Firebase console only.
+    match /admins/{email} {
+      allow get: if isAuthenticated() && request.auth.token.email != null && myEmail() == email;
+      allow list: if isAdmin();
       allow write: if false;
+    }
+
+    // Approved officers. Managed from the admin portal.
+    match /police_officers/{email} {
+      allow get: if (isAuthenticated() && request.auth.token.email != null && myEmail() == email)
+                 || isAdmin();
+      allow list: if isAdmin() || isPolice();
+      allow write: if isAdmin();
+    }
+
+    // Access requests from unapproved @police.gov.pk accounts.
+    match /police_requests/{email} {
+      allow get: if (isAuthenticated() && request.auth.token.email != null && myEmail() == email)
+                 || isAdmin();
+      allow list: if isAdmin();
+      allow create, update: if (isAuthenticated()
+                                && request.auth.token.email != null
+                                && myEmail() == email
+                                && request.resource.data.uid == request.auth.uid
+                                && request.resource.data.status == 'pending')
+                            || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Admin activity log: append-only, readable by admins.
+    match /admin_logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && request.resource.data.by == myEmail();
+      allow update, delete: if false;
+    }
+
+    // Content published from the admin portal (e.g. Legal Hub guides/videos).
+    match /app_content/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
     }
 
     // User profiles (name, CNIC, face data): only the owner and police.
     // Signup's "already registered?" check uses /registry instead.
     match /users/{userId} {
-      allow read: if isOwner(userId) || isPolice();
-      allow create: if isOwner(userId);
-      allow update: if isOwner(userId);
+      allow read: if isOwner(userId) || isPolice() || isAdmin();
+      allow create: if isOwner(userId) && !('blocked' in request.resource.data);
+      // Owners edit their profile but never their own block status.
+      allow update: if (isOwner(userId) && !touchesBlockFields()) || isAdmin();
       allow delete: if false;
 
       // Private Identity Subcollection:
@@ -54,12 +121,13 @@ service cloud.firestore {
     // Incident Reports collection
     match /reports/{reportId} {
       // Only the person who reported it, or police, can read a report.
-      allow read: if isOwner(resource.data.userId) || isPolice();
+      allow read: if isOwner(resource.data.userId) || isPolice() || isAdmin();
 
       // Creator must be logged in, submit under their own UID and be
       // identity-verified. Anonymous reports must not carry the reporter's
       // email or verification selfie (those go to report_identity instead).
       allow create: if isAuthenticated()
+                    && !isBlocked()
                     && request.resource.data.userId == request.auth.uid
                     && request.resource.data.identityVerified == true
                     && request.resource.data.get('status', 'pending') == 'pending'
@@ -69,17 +137,24 @@ service cloud.firestore {
 
       // Police manage status and remarks; the reporter may only update
       // their own report's details (e.g. AI analysis), not its status.
-      allow update: if isPolice()
-                    || (isOwner(resource.data.userId) && !touchesPoliceFields());
-      allow delete: if isOwner(resource.data.userId) || isPolice();
+      // Admins moderate (fake/spam flags, reassignment); police cannot
+      // change moderation flags.
+      allow update: if isAdmin()
+                    || (isPolice() && !touchesModerationFields())
+                    || (isOwner(resource.data.userId) && !touchesPoliceFields()
+                        && !touchesModerationFields());
+      allow delete: if isOwner(resource.data.userId) || isPolice() || isAdmin();
     }
 
     // Identity behind anonymous reports. Write-once by the reporter; nobody
     // can read it from the app (only an admin, via the Firebase console,
     // e.g. under a court order or for a malicious fake report).
+    // Admins may look one up from the portal; every look-up is logged there.
     match /report_identity/{reportId} {
       allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
-      allow read, update, delete: if false;
+      allow get: if isAdmin();
+      allow list, update: if false;
+      allow delete: if isAdmin();
     }
 
     // Signup registry: one-way hashes of emails / CNICs -> owner uid.
@@ -119,7 +194,7 @@ service cloud.firestore {
     match /companion_sessions/{sessionId} {
       // Live trips: only the traveller and police.
       allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isPolice());
-      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && !isBlocked() && request.resource.data.userId == request.auth.uid;
       allow update: if isAuthenticated() && (resource.data.userId == request.auth.uid || isPolice());
       allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isPolice());
     }
