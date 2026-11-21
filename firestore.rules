@@ -11,13 +11,34 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    // Police = a @police.gov.pk email that an admin has approved by adding
+    // a document police_officers/{email} in the Firebase console.
+    // (Just owning an address that ends in @police.gov.pk is not enough.)
     function isPolice() {
-      return isAuthenticated() && request.auth.token.email.matches('.*@police\\.gov\\.pk$');
+      return isAuthenticated()
+        && request.auth.token.email != null
+        && request.auth.token.email.matches('.*@police[.]gov[.]pk$')
+        && exists(/databases/$(database)/documents/police_officers/$(request.auth.token.email));
     }
 
-    // Users collection (read allowed so registration pre-check can verify email/CNIC availability)
+    // Fields only police may change on a report.
+    function touchesPoliceFields() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['status', 'policeRemarks', 'remarksBy', 'remarksAt',
+                 'statusHistory', 'resolvedAt', 'userId',
+                 'assignedTo', 'assignedAt']);
+    }
+
+    // Approved officers. Managed by an admin in the Firebase console only.
+    match /police_officers/{email} {
+      allow read: if isAuthenticated() && request.auth.token.email == email;
+      allow write: if false;
+    }
+
+    // User profiles (name, CNIC, face data): only the owner and police.
+    // Signup's "already registered?" check uses /registry instead.
     match /users/{userId} {
-      allow read: if true;
+      allow read: if isOwner(userId) || isPolice();
       allow create: if isOwner(userId);
       allow update: if isOwner(userId);
       allow delete: if false;
@@ -32,16 +53,46 @@ service cloud.firestore {
 
     // Incident Reports collection
     match /reports/{reportId} {
-      allow read: if isAuthenticated();
-      
-      // Enforce that report creator is logged in, submitting under their own UID,
-      // and has identityVerified asserted.
-      allow create: if isAuthenticated() 
-                    && request.resource.data.userId == request.auth.uid
-                    && request.resource.data.identityVerified == true;
+      // Only the person who reported it, or police, can read a report.
+      allow read: if isOwner(resource.data.userId) || isPolice();
 
-      // Only the report author or police can modify or manage reports
-      allow update, delete: if isOwner(resource.data.userId) || isPolice();
+      // Creator must be logged in, submit under their own UID and be
+      // identity-verified. Anonymous reports must not carry the reporter's
+      // email or verification selfie (those go to report_identity instead).
+      allow create: if isAuthenticated()
+                    && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.identityVerified == true
+                    && request.resource.data.get('status', 'pending') == 'pending'
+                    && (request.resource.data.get('isAnonymous', false) != true
+                        || (!('userEmail' in request.resource.data)
+                            && !('verificationSelfieUrl' in request.resource.data)));
+
+      // Police manage status and remarks; the reporter may only update
+      // their own report's details (e.g. AI analysis), not its status.
+      allow update: if isPolice()
+                    || (isOwner(resource.data.userId) && !touchesPoliceFields());
+      allow delete: if isOwner(resource.data.userId) || isPolice();
+    }
+
+    // Identity behind anonymous reports. Write-once by the reporter; nobody
+    // can read it from the app (only an admin, via the Firebase console,
+    // e.g. under a court order or for a malicious fake report).
+    match /report_identity/{reportId} {
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow read, update, delete: if false;
+    }
+
+    // Signup registry: one-way hashes of emails / CNICs -> owner uid.
+    // A direct get is allowed (also before login, for the signup check);
+    // listing is not, so nobody can browse it.
+    match /registry/{key} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if isAuthenticated() && request.resource.data.uid == request.auth.uid;
+      allow update: if isAuthenticated()
+                    && resource.data.uid == request.auth.uid
+                    && request.resource.data.uid == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.uid == request.auth.uid;
     }
 
     // Emergency Contacts collection
@@ -52,13 +103,24 @@ service cloud.firestore {
 
     // SOS events collection
     match /sos_events/{eventId} {
-      allow read, create: if isAuthenticated();
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isPolice());
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
       allow update: if isAuthenticated() && (request.auth.uid == resource.data.userId || isPolice());
+    }
+
+    // Older Companion Mode trips (document id = the traveller's uid).
+    match /trips/{tripId} {
+      allow read: if isOwner(tripId) || isPolice();
+      allow create, update: if isOwner(tripId);
+      allow delete: if isOwner(tripId) || isPolice();
     }
 
     // Companion Mode live tracking sessions
     match /companion_sessions/{sessionId} {
-      allow read, create, update: if isAuthenticated();
+      // Live trips: only the traveller and police.
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isPolice());
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && (resource.data.userId == request.auth.uid || isPolice());
       allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isPolice());
     }
   }

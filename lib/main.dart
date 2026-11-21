@@ -6,6 +6,9 @@ import 'package:flutter/material.dart';
 import 'theme/app_theme.dart';
 import 'theme/responsive.dart';
 import 'widgets/app_logo.dart';
+import 'services/distress_monitor.dart';
+import 'services/police_access.dart';
+import 'screens/distress_alert_screen.dart';
 import 'firebase_options.dart';
 import 'services/notification_service.dart';
 import 'screens/login_screen.dart';
@@ -32,6 +35,9 @@ void main() async {
   FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
   await NotificationService.init();
   runApp(const SafetyGuardianApp());
+  // Resume distress detection if the user turned it on (works app-wide,
+  // even after the app is closed).
+  DistressMonitor.instance.restoreOnLaunch();
 }
 
 class SafetyGuardianApp extends StatelessWidget {
@@ -40,6 +46,7 @@ class SafetyGuardianApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: DistressMonitor.instance.navigatorKey,
       title: 'Safety Guardian',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
@@ -54,22 +61,33 @@ class SafetyGuardianApp extends StatelessWidget {
               if (snapshot.connectionState == ConnectionState.active) {
                 if (snapshot.hasData) {
                   final user = snapshot.data!;
-                  final isPolice =
-                      user.email?.contains('@police.gov.pk') == true;
 
-                  // Citizens must verify their email; police are exempt (trusted domain).
-                  if (!isPolice && !user.emailVerified) {
+                  // Police: a @police.gov.pk email that an admin approved
+                  // (police_officers/{email} in Firestore). No other check.
+                  if (PoliceAccess.hasPoliceEmail(user)) {
+                    return FutureBuilder<bool>(
+                      future: PoliceAccess.isApprovedOfficer(user),
+                      builder: (context, approved) {
+                        if (approved.connectionState != ConnectionState.done) {
+                          return const BrandSplash();
+                        }
+                        if (approved.data != true) {
+                          return const _PoliceNotApprovedScreen();
+                        }
+                        NotificationService.saveToken();
+                        return const PoliceDashboardScreen();
+                      },
+                    );
+                  }
+
+                  // Citizens must verify their email.
+                  if (!user.emailVerified) {
                     return const VerifyEmailScreen();
                   }
 
                   // Fire-and-forget save of FCM token on each auth rebuild.
                   NotificationService.saveToken();
-
-                  if (isPolice) {
-                    return const PoliceDashboardScreen();
-                  } else {
-                    return const CitizenHomeScreen();
-                  }
+                  return const CitizenHomeScreen();
                 }
                 return const LoginScreen();
               }
@@ -82,12 +100,13 @@ class SafetyGuardianApp extends StatelessWidget {
         '/forgot-password': (context) => const ForgotPasswordScreen(),
         '/companion': (context) => const CompanionModeScreen(),
         '/distress': (context) => const DistressDetectionScreen(),
+        '/distress-alert': (context) => const DistressAlertScreen(),
         '/sos': (context) => const EmergencySOSScreen(),
         '/evidence': (context) => const EvidenceCaptureScreen(),
         // Police/admin only: citizens are sent back to their home screen.
         '/prioritization': (context) {
-          final email = FirebaseAuth.instance.currentUser?.email ?? '';
-          return email.contains('@police.gov.pk')
+          // The Firestore rules also block non-approved accounts from the data.
+          return PoliceAccess.hasPoliceEmail(FirebaseAuth.instance.currentUser)
               ? const ReportPrioritizationScreen()
               : const CitizenHomeScreen();
         },
@@ -131,6 +150,60 @@ class _SplashDelayState extends State<_SplashDelay> {
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 350),
       child: _ready ? widget.child : const BrandSplash(),
+    );
+  }
+}
+
+/// Shown to a @police.gov.pk account that an admin hasn't approved yet.
+class _PoliceNotApprovedScreen extends StatelessWidget {
+  const _PoliceNotApprovedScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    final email = FirebaseAuth.instance.currentUser?.email ?? '';
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.admin_panel_settings_outlined,
+                  size: 56,
+                  color: AppColors.warning,
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Police account not approved yet',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '$email has not been approved as a police officer. '
+                  'Ask your administrator to approve this account, then sign in again.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: AppColors.textMuted,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    PoliceAccess.clearCache();
+                    FirebaseAuth.instance.signOut();
+                  },
+                  icon: const Icon(Icons.logout),
+                  label: const Text('Sign out'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

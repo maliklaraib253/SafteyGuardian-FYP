@@ -57,8 +57,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       MaterialPageRoute(builder: (_) => const ManageContactsScreen()),
     );
     await _sosService.loadContacts();
-    if (mounted)
+    if (mounted) {
       setState(() => _contacts = List.from(_sosService.trustedContacts));
+    }
   }
 
   Future<void> _confirmLogout() async {

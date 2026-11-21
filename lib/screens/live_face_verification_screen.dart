@@ -562,7 +562,7 @@ class _LiveFaceVerificationScreenState extends State<LiveFaceVerificationScreen>
                 child: Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.red.shade900.withOpacity(0.5),
+                    color: Colors.red.shade900.withValues(alpha: 0.5),
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: Colors.redAccent.shade400),
                   ),

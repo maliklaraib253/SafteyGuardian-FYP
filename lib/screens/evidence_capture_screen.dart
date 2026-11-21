@@ -1,8 +1,6 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:iconsax/iconsax.dart';
-import 'package:permission_handler/permission_handler.dart';
 import '../services/evidence_service.dart';
 
 class EvidenceCaptureScreen extends StatefulWidget {

@@ -1,4 +1,5 @@
 import 'dart:io' show Platform;
+
 import 'package:dio/dio.dart';
 
 /// Base exception for all Gemini API related errors.
@@ -15,22 +16,38 @@ class GeminiException implements Exception {
 
 /// Thrown when the Gemini API key is missing or invalid.
 class GeminiAuthException extends GeminiException {
-  const GeminiAuthException(super.message, {super.statusCode, super.originalError});
+  const GeminiAuthException(
+    super.message, {
+    super.statusCode,
+    super.originalError,
+  });
 }
 
 /// Thrown when API quota or rate limits are reached (HTTP 429).
 class GeminiQuotaException extends GeminiException {
-  const GeminiQuotaException(super.message, {super.statusCode, super.originalError});
+  const GeminiQuotaException(
+    super.message, {
+    super.statusCode,
+    super.originalError,
+  });
 }
 
 /// Thrown when internet connection or host resolution fails.
 class GeminiNetworkException extends GeminiException {
-  const GeminiNetworkException(super.message, {super.statusCode, super.originalError});
+  const GeminiNetworkException(
+    super.message, {
+    super.statusCode,
+    super.originalError,
+  });
 }
 
 /// Thrown when Gemini servers encounter an internal error (HTTP 5xx).
 class GeminiServerException extends GeminiException {
-  const GeminiServerException(super.message, {super.statusCode, super.originalError});
+  const GeminiServerException(
+    super.message, {
+    super.statusCode,
+    super.originalError,
+  });
 }
 
 /// Structured response from Gemini.
@@ -41,12 +58,18 @@ class GeminiResponse {
   final int? candidateTokens;
   final int? totalTokens;
 
+  /// Why generation stopped, e.g. STOP (complete) or MAX_TOKENS (cut off).
+  final String? finishReason;
+
+  bool get wasCutOff => finishReason == 'MAX_TOKENS';
+
   const GeminiResponse({
     required this.text,
     required this.model,
     this.promptTokens,
     this.candidateTokens,
     this.totalTokens,
+    this.finishReason,
   });
 }
 
@@ -78,21 +101,20 @@ class GeminiService {
 
   static const String defaultModel = 'gemini-3.5-flash';
   static const String alternateModel = 'gemini-3.8-flash';
-  static const String _baseUrl = 'https://generativelanguage.googleapis.com/v1beta';
+  static const String _baseUrl =
+      'https://generativelanguage.googleapis.com/v1beta';
 
-  GeminiService({
-    String? apiKey,
-    this.model = defaultModel,
-    Dio? dio,
-  })  : _injectedApiKey = apiKey,
-        _dio = dio ??
-            Dio(
-              BaseOptions(
-                connectTimeout: const Duration(seconds: 15),
-                receiveTimeout: const Duration(seconds: 30),
-                headers: {'Content-Type': 'application/json'},
-              ),
-            );
+  GeminiService({String? apiKey, this.model = defaultModel, Dio? dio})
+    : _injectedApiKey = apiKey,
+      _dio =
+          dio ??
+          Dio(
+            BaseOptions(
+              connectTimeout: const Duration(seconds: 15),
+              receiveTimeout: const Duration(seconds: 60),
+              headers: {'Content-Type': 'application/json'},
+            ),
+          );
 
   /// Resolves the API key securely in the following order:
   /// 1. Constructor injected key
@@ -144,9 +166,9 @@ class GeminiService {
       'contents': [
         {
           'parts': [
-            {'text': prompt}
-          ]
-        }
+            {'text': prompt},
+          ],
+        },
       ],
       'generationConfig': ?generationConfig,
     };
@@ -157,10 +179,7 @@ class GeminiService {
     while (true) {
       attempt++;
       try {
-        final response = await _dio.post(
-          endpoint,
-          data: payload,
-        );
+        final response = await _dio.post(endpoint, data: payload);
 
         final data = response.data;
         if (data is! Map<String, dynamic>) {
@@ -190,7 +209,13 @@ class GeminiService {
           );
         }
 
-        final text = parts.first['text'] as String? ?? '';
+        // Join every text part (long answers can be split into several);
+        // skip "thought" parts that thinking models may return.
+        final text = parts
+            .whereType<Map<String, dynamic>>()
+            .where((p) => p['thought'] != true)
+            .map((p) => p['text'] as String? ?? '')
+            .join();
         final usage = data['usageMetadata'] as Map<String, dynamic>?;
 
         return GeminiResponse(
@@ -199,6 +224,7 @@ class GeminiService {
           promptTokens: usage?['promptTokenCount'] as int?,
           candidateTokens: usage?['candidatesTokenCount'] as int?,
           totalTokens: usage?['totalTokenCount'] as int?,
+          finishReason: firstCandidate['finishReason'] as String?,
         );
       } on DioException catch (dioErr) {
         final statusCode = dioErr.response?.statusCode;
@@ -220,7 +246,10 @@ class GeminiService {
         throw _handleDioError(dioErr);
       } catch (e) {
         if (e is GeminiException) rethrow;
-        throw GeminiException('Unexpected error invoking Gemini: $e', originalError: e);
+        throw GeminiException(
+          'Unexpected error invoking Gemini: $e',
+          originalError: e,
+        );
       }
     }
   }
@@ -231,19 +260,14 @@ class GeminiService {
     const testPrompt = 'Respond with exactly: Gemini connection successful';
     try {
       final res = await generateContent(testPrompt);
-      return GeminiTestResult(
-        success: true,
-        message: res.text,
-        response: res,
-      );
+      return GeminiTestResult(success: true, message: res.text, response: res);
     } on GeminiException catch (e) {
-      return GeminiTestResult(
-        success: false,
-        message: e.message,
-        error: e,
-      );
+      return GeminiTestResult(success: false, message: e.message, error: e);
     } catch (e) {
-      final geminiErr = GeminiException('Unexpected error: $e', originalError: e);
+      final geminiErr = GeminiException(
+        'Unexpected error: $e',
+        originalError: e,
+      );
       return GeminiTestResult(
         success: false,
         message: geminiErr.message,
@@ -258,7 +282,8 @@ class GeminiService {
     final responseData = error.response?.data;
     String apiErrorMessage = '';
 
-    if (responseData is Map<String, dynamic> && responseData.containsKey('error')) {
+    if (responseData is Map<String, dynamic> &&
+        responseData.containsKey('error')) {
       final errObj = responseData['error'];
       if (errObj is Map<String, dynamic> && errObj.containsKey('message')) {
         apiErrorMessage = errObj['message'].toString();
@@ -321,7 +346,8 @@ class GeminiService {
     return GeminiException(
       apiErrorMessage.isNotEmpty
           ? apiErrorMessage
-          : (error.message ?? 'Unknown network error communicating with Gemini API.'),
+          : (error.message ??
+                'Unknown network error communicating with Gemini API.'),
       statusCode: statusCode,
       originalError: error,
     );

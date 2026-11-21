@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import '../services/distress_monitor.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:iconsax/iconsax.dart';
@@ -547,9 +548,8 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
   }
 
   Future<void> _stopForegroundService() async {
-    if (await FlutterForegroundTask.isRunningService) {
-      await FlutterForegroundTask.stopService();
-    }
+    // Shared with distress detection: don't switch that off.
+    await DistressMonitor.instance.releaseForegroundService();
   }
 
   Future<void> _startCompanionMode() async {

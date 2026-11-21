@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:async';
 import 'package:camera/camera.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'distress_monitor.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -64,9 +65,8 @@ class EvidenceService {
   }
 
   Future<void> _stopForegroundService() async {
-    if (await FlutterForegroundTask.isRunningService) {
-      await FlutterForegroundTask.stopService();
-    }
+    // Shared with distress detection: don't switch that off.
+    await DistressMonitor.instance.releaseForegroundService();
   }
 
   // ─── INITIALIZE CAMERA ───────────────────────────────────────────────────────

@@ -340,8 +340,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
               onChanged: (_) => setState(() {}),
               validator: (v) {
                 final value = v?.trim() ?? '';
-                if (value.length < 3)
+                if (value.length < 3) {
                   return 'Name must be at least 3 characters';
+                }
                 if (value.length > 50) return 'Name is too long';
                 return null;
               },

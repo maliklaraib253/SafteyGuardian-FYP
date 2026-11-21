@@ -4,7 +4,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../services/routing_service.dart';
 import 'package:iconsax/iconsax.dart';
-import '../widgets/custom_button.dart';
 
 class ReportPrioritizationScreen extends StatefulWidget {
   const ReportPrioritizationScreen({super.key});

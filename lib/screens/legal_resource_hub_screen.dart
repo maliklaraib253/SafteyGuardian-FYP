@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:iconsax/iconsax.dart';
-import '../widgets/custom_button.dart';
+import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import '../services/gemini_service.dart';
+import '../theme/app_theme.dart';
 
 class LegalResourceHubScreen extends StatefulWidget {
   const LegalResourceHubScreen({super.key});
@@ -21,19 +25,7 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
   String _selectedCategory = 'All';
 
   // Chatbot messages
-  final List<Map<String, dynamic>> _chatMessages = [
-    {
-      'sender': 'bot',
-      'message': 'Hello! I\'m your legal assistant. How can I help you today?',
-      'time': '10:00 AM',
-    },
-    {
-      'sender': 'bot',
-      'message':
-          'You can ask me about:\n• Legal rights\n• Complaint procedures\n• Self-defense tips\n• Evidence collection',
-      'time': '10:00 AM',
-    },
-  ];
+  late final List<Map<String, dynamic>> _chatMessages = _welcomeMessages();
 
   final TextEditingController _chatController = TextEditingController();
 
@@ -52,8 +44,7 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
     {
       'title': 'Your Rights During Arrest',
       'category': 'Rights',
-      'description':
-          'Know what to do if you are arrested by police. Learn about your fundamental rights under the law.',
+      'description': 'Know what to do if you are arrested by police. Learn about your fundamental rights under the law.',
       'icon': Iconsax.shield_tick,
       'color': Colors.green,
       'content': '''
@@ -78,8 +69,7 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
     {
       'title': 'How to File an FIR',
       'category': 'Complaints',
-      'description':
-          'Step-by-step guide to filing a First Information Report (FIR) at the police station.',
+      'description': 'Step-by-step guide to filing a First Information Report (FIR) at the police station.',
       'icon': Iconsax.document,
       'color': Colors.orange,
       'content': '''
@@ -101,8 +91,7 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
     {
       'title': 'Self-Defense Basics',
       'category': 'Self-Defense',
-      'description':
-          'Essential self-defense techniques for personal safety in threatening situations.',
+      'description': 'Essential self-defense techniques for personal safety in threatening situations.',
       'icon': Iconsax.activity,
       'color': Colors.purple,
       'content': '''
@@ -149,8 +138,7 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
     {
       'title': 'Women Safety Laws',
       'category': 'Laws',
-      'description':
-          'Important legal protections and rights for women under Pakistani law.',
+      'description': 'Important legal protections and rights for women under Pakistani law.',
       'icon': Iconsax.book,
       'color': Colors.teal,
       'content': '''
@@ -196,8 +184,7 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
     {
       'title': 'Traffic Violations',
       'category': 'Laws',
-      'description':
-          'Understanding traffic laws, fines, and your rights during traffic stops.',
+      'description': 'Understanding traffic laws, fines, and your rights during traffic stops.',
       'icon': Iconsax.car,
       'color': Colors.amber,
       'content': '''
@@ -242,43 +229,79 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
     },
   ];
 
-  // Self-defense videos
+  // Self-defense techniques: steps shown in the app, videos open in YouTube.
   final List<Map<String, dynamic>> _selfDefenseVideos = [
     {
-      'title': 'Basic Palm Strike',
-      'duration': '2:30',
-      'views': '12K',
+      'title': 'Palm strike',
       'level': 'Beginner',
+      'icon': Iconsax.flash_1,
+      'query': 'palm strike self defense for women',
+      'steps': [
+        'Stand side-on, feet shoulder-width apart, hands up near your face.',
+        'Bend your wrist back and keep your fingers pulled in.',
+        'Push the heel of your palm hard into the nose or chin, driving from your hips.',
+        'Pull your hand back fast, then run and shout for help.',
+      ],
     },
     {
-      'title': 'Escape from Wrist Grab',
-      'duration': '3:15',
-      'views': '18K',
+      'title': 'Escape a wrist grab',
       'level': 'Beginner',
+      'icon': Iconsax.arrow_swap_horizontal,
+      'query': 'escape wrist grab self defense',
+      'steps': [
+        "Don't pull straight back: find the gap between their thumb and fingers.",
+        'Turn your wrist towards their thumb.',
+        'Pull out sharply through that gap, using your whole arm.',
+        'Step away immediately and move to a crowded place.',
+      ],
     },
     {
-      'title': 'Defense Against Choke',
-      'duration': '4:00',
-      'views': '22K',
+      'title': 'Defense against a choke',
       'level': 'Intermediate',
+      'icon': Iconsax.shield_cross,
+      'query': 'front choke escape self defense women',
+      'steps': [
+        'Tuck your chin down to protect your throat.',
+        'Raise one arm straight up and turn your body sharply to that side.',
+        'This breaks their grip: strike back with an elbow or knee if needed.',
+        'Get away and call 15 or press SOS.',
+      ],
     },
     {
-      'title': 'Using Keys as Weapon',
-      'duration': '2:45',
-      'views': '15K',
+      'title': 'Using everyday objects',
       'level': 'Beginner',
+      'icon': Iconsax.key,
+      'query': 'everyday objects self defense keys bag',
+      'steps': [
+        'Keep keys, a pen or a phone in your hand when walking alone.',
+        'Hold keys firmly in a fist, one key sticking out from the side.',
+        'Aim for the face or hands only to create space to escape.',
+        'A bag or umbrella can also block and push an attacker away.',
+      ],
     },
     {
-      'title': 'Ground Defense Techniques',
-      'duration': '5:20',
-      'views': '25K',
+      'title': 'Getting up from the ground',
       'level': 'Advanced',
+      'icon': Iconsax.arrow_up_3,
+      'query': 'ground self defense technical stand up',
+      'steps': [
+        'Stay on your back, knees bent, feet towards the attacker.',
+        'Kick at their knees or shins if they come close.',
+        'Post one hand behind you and the opposite foot on the ground.',
+        'Lift your hips and swing your leg back to stand up facing them, then run.',
+      ],
     },
     {
-      'title': 'Escaping Bear Hug',
-      'duration': '3:30',
-      'views': '14K',
+      'title': 'Escape a bear hug',
       'level': 'Intermediate',
+      'icon': Iconsax.user_remove,
+      'query': 'bear hug escape self defense',
+      'steps': [
+        'Drop your weight by bending your knees so you are harder to lift.',
+        'Stamp on their foot or kick back at their shin.',
+        'Drive an elbow back into their ribs or face.',
+        'Turn out of their arms as the grip loosens, then run.',
+      ],
     },
   ];
 
@@ -293,57 +316,186 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
     _tabController.dispose();
     _searchController.dispose();
     _chatController.dispose();
+    _chatScroll.dispose();
     super.dispose();
   }
 
-  // Send message in chatbot
-  void _sendMessage() {
-    if (_chatController.text.trim().isEmpty) return;
+  // ---------------------------------------------------------------------------
+  // Legal assistant (Gemini, with an offline fallback)
+  // ---------------------------------------------------------------------------
 
-    setState(() {
-      _chatMessages.add({
-        'sender': 'user',
-        'message': _chatController.text.trim(),
-        'time':
-            '${DateTime.now().hour}:${DateTime.now().minute.toString().padLeft(2, '0')}',
-      });
+  final ScrollController _chatScroll = ScrollController();
+  final GeminiService _gemini = GeminiService();
+  bool _botTyping = false;
 
-      // Simulate bot response
-      Future.delayed(const Duration(seconds: 1), () {
-        setState(() {
-          _chatMessages.add({
-            'sender': 'bot',
-            'message': _getBotResponse(_chatController.text.trim()),
-            'time':
-                '${DateTime.now().hour}:${DateTime.now().minute.toString().padLeft(2, '0')}',
-          });
-        });
-      });
+  static String _now() {
+    final t = TimeOfDay.now();
+    final h = t.hourOfPeriod == 0 ? 12 : t.hourOfPeriod;
+    return '$h:${t.minute.toString().padLeft(2, '0')} ${t.period == DayPeriod.am ? 'AM' : 'PM'}';
+  }
 
-      _chatController.clear();
+  void _scrollChatToEnd() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_chatScroll.hasClients) return;
+      _chatScroll.animateTo(
+        _chatScroll.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOut,
+      );
     });
   }
 
-  // Get bot response based on user input
-  String _getBotResponse(String message) {
-    String lowerMsg = message.toLowerCase();
+  static const String _assistantBrief = '''
+You are "Safety Guardian Legal Assistant", a helpful assistant inside a Pakistani citizen-safety app.
+Answer questions about Pakistani law, citizens' rights and procedures: filing an FIR (CrPC s.154) and what to do if police refuse,
+harassment (PPC s.509, Protection against Harassment of Women at the Workplace Act 2010, Ombudsperson),
+cyber crime and online harassment (PECA 2016, FIA Cyber Crime Wing, 1991), domestic violence, arrest rights (Constitution Art. 10),
+evidence collection, medico-legal reports, free legal aid, and personal safety.
+Rules:
+- Reply in the same language the user writes in (English, Urdu, or Roman Urdu).
+- Be practical and complete but focused: usually under 250 words, use short numbered steps or bullet points, no markdown headings, no bold.
+- Mention the relevant law or section when you are confident; never invent section numbers.
+- Give the right helpline when useful: Police 15, Rescue 1122, Ambulance 115, Women helpline 1043 (Punjab), FIA Cyber Crime 1991,
+  Madadgaar 1098 (children/women), Edhi 115.
+- If the user seems to be in immediate danger, tell them first to press SOS in the app or call 15.
+- You are not a lawyer: for serious cases, suggest consulting a lawyer or the district legal aid committee.
+- Politely decline questions that are not about safety, law or rights.
+''';
 
-    if (lowerMsg.contains('fir') || lowerMsg.contains('report')) {
-      return 'To file an FIR:\n1. Go to nearest police station\n2. Provide incident details\n3. Get free copy of FIR\n4. If refused, contact a lawyer';
-    } else if (lowerMsg.contains('right') || lowerMsg.contains('arrest')) {
-      return 'Your rights during arrest:\n• Remain silent\n• Know reason for arrest\n• Call lawyer\n• Inform family\n• Medical examination';
-    } else if (lowerMsg.contains('self defense') ||
-        lowerMsg.contains('defend')) {
-      return 'Self-defense tips:\n• Stay aware of surroundings\n• Target vulnerable areas\n• Create distance\n• Run to safety\n• Shout for help';
-    } else if (lowerMsg.contains('evidence') || lowerMsg.contains('proof')) {
-      return 'Evidence collection:\n• Take photos/videos\n• Preserve physical evidence\n• Get witness contacts\n• Medical reports\n• Save screenshots';
-    } else if (lowerMsg.contains('helpline') || lowerMsg.contains('contact')) {
-      return 'Emergency contacts:\nPolice: 15\nAmbulance: 115\nWomen Helpline: 1099\nCyber Crime: 1991';
-    } else if (lowerMsg.contains('harassment')) {
-      return 'For harassment:\n• Report to police\n• Save all evidence\n• Workplace Harassment Law 2010\n• Women Helpline: 1099';
-    } else {
-      return 'I can help you with:\n• Legal rights\n• Filing complaints\n• Self-defense tips\n• Evidence collection\n• Emergency contacts\nWhat would you like to know?';
+  Future<void> _sendMessage([String? preset]) async {
+    final text = (preset ?? _chatController.text).trim();
+    if (text.isEmpty || _botTyping) return;
+
+    setState(() {
+      _chatMessages.add({'sender': 'user', 'message': text, 'time': _now()});
+      _chatController.clear();
+      _botTyping = true;
+    });
+    _scrollChatToEnd();
+
+    String reply;
+    var offline = false;
+    String? offlineReason;
+    try {
+      if (!_gemini.hasApiKey) throw const GeminiAuthException('AI key not set');
+      // Last few turns so follow-up questions make sense.
+      final history = _chatMessages
+          .where((m) => m['local'] != true)
+          .toList()
+          .reversed
+          .take(8)
+          .toList()
+          .reversed
+          .map(
+            (m) =>
+                '${m['sender'] == 'bot' ? 'Assistant' : 'User'}: ${m['message']}',
+          )
+          .join('\n');
+      final prompt =
+          '$_assistantBrief\nConversation so far:\n$history\n\nAssistant:';
+
+      var res = await _gemini.generateContent(
+        prompt,
+        generationConfig: {'temperature': 0.3, 'maxOutputTokens': 8192},
+      );
+      reply = res.text;
+      // If the answer was cut off, ask the model to carry on (up to twice).
+      for (var i = 0; i < 2 && res.wasCutOff; i++) {
+        res = await _gemini.generateContent(
+          '$prompt $reply\n\n(Continue exactly where the answer above stopped. '
+          'Do not repeat anything.)',
+          generationConfig: {'temperature': 0.3, 'maxOutputTokens': 8192},
+        );
+        reply = '$reply${res.text.startsWith(' ') ? '' : ' '}${res.text}';
+      }
+      reply = reply
+          .replaceAll('**', '')
+          .replaceAll(RegExp(r'^#+\s*', multiLine: true), '')
+          .trim();
+      if (reply.isEmpty) throw const GeminiException('empty reply');
+    } catch (e) {
+      debugPrint('[LegalAssistant] Gemini unavailable: $e');
+      offline = true;
+      offlineReason = switch (e) {
+        GeminiAuthException() => 'AI key missing or invalid',
+        GeminiQuotaException() => 'AI daily limit reached',
+        GeminiNetworkException() => 'no internet or the AI took too long',
+        _ => 'AI service error',
+      };
+      reply = _getBotResponse(text);
     }
+
+    if (!mounted) return;
+    setState(() {
+      _botTyping = false;
+      _chatMessages.add({
+        'sender': 'bot',
+        'message': reply,
+        'time': _now(),
+        if (offline) 'offline': offlineReason,
+      });
+    });
+    _scrollChatToEnd();
+  }
+
+  void _clearChat() {
+    setState(() {
+      _chatMessages
+        ..clear()
+        ..addAll(_welcomeMessages());
+    });
+  }
+
+  List<Map<String, dynamic>> _welcomeMessages() => [
+    {
+      'sender': 'bot',
+      'local': true,
+      'message': "Assalam-o-Alaikum! I'm your legal assistant. Ask me anything about your rights, FIRs, harassment, cyber crime or collecting evidence, in English or Urdu.",
+      'time': _now(),
+    },
+  ];
+
+  /// Offline answers when the AI can't be reached.
+  String _getBotResponse(String message) {
+    final m = message.toLowerCase();
+    bool has(List<String> words) => words.any(m.contains);
+
+    if (has(['fir', 'report', 'complaint', 'shikayat', 'parcha'])) {
+      return 'To file an FIR (CrPC section 154):\n1. Go to the police station where the incident happened.\n2. Tell the duty officer what happened; it must be written down.\n3. Read it, sign it, and get a free copy.\n4. If police refuse, apply to the SSP/DPO, or to the Sessions Court (justice of peace) under section 22-A CrPC.\nYou can also report through this app: Home → Report incident.';
+    }
+    if (has(['arrest', 'giraftar', 'custody'])) {
+      return 'If you are arrested (Constitution Article 10):\n• You must be told the reason.\n• You can contact and be defended by a lawyer.\n• You must be produced before a magistrate within 24 hours.\n• Ask for a medical examination if you were hurt.\n• Inform your family.';
+    }
+    if (has([
+      'cyber',
+      'online',
+      'blackmail',
+      'facebook',
+      'whatsapp',
+      'photos leak',
+      'hack',
+    ])) {
+      return 'Online harassment or blackmail (PECA 2016):\n1. Don\'t delete anything. Take screenshots with dates and profile links.\n2. Don\'t pay or negotiate.\n3. Report to FIA Cyber Crime: helpline 1991 or complaint.fia.gov.pk.\n4. Report and block the account on the platform.';
+    }
+    if (has(['harass', 'tang', 'workplace', 'office'])) {
+      return 'For harassment:\n• Street or public harassment is an offence under PPC section 509; report to police (15).\n• At work: complain to your office inquiry committee or the Federal/Provincial Ombudsperson under the 2010 Act.\n• Keep evidence: messages, witnesses, dates.\n• Women helpline (Punjab): 1043.';
+    }
+    if (has(['evidence', 'proof', 'saboot'])) {
+      return 'Collecting evidence:\n• Photos and videos (Evidence capture in this app saves them with location).\n• Screenshots of messages with date and number.\n• Names and numbers of witnesses.\n• A medico-legal report from a government hospital for any injury.\n• Keep originals; share copies.';
+    }
+    if (has(['domestic', 'husband', 'ghar', 'family violence'])) {
+      return 'Domestic violence:\n• If in danger now, press SOS or call 15.\n• You can file an FIR for hurt (PPC 332-337).\n• Provinces have protection laws and shelters (Dar-ul-Aman); Punjab: Violence Against Women Centres, helpline 1043.\n• Get a medico-legal report for injuries.';
+    }
+    if (has(['self defense', 'self-defence', 'defend', 'attack'])) {
+      return 'Self-defence:\n• Pakistani law (PPC 96-106) lets you use reasonable force to protect yourself.\n• Your goal is to escape: create distance, shout, run to a crowded place.\n• Use SOS in this app to alert your contacts.';
+    }
+    if (has(['helpline', 'number', 'contact', 'call'])) {
+      return 'Emergency numbers:\nPolice 15 · Rescue 1122 · Ambulance 115\nWomen helpline (Punjab) 1043 · FIA Cyber Crime 1991 · Madadgaar 1098';
+    }
+    if (has(['lawyer', 'wakeel', 'legal aid', 'free'])) {
+      return 'Free legal help:\n• District Legal Empowerment Committees at every district court give free lawyers to people who can\'t afford one.\n• Bar council legal aid cells.\n• NGOs like Legal Aid Society (Karachi) and AGHS (Lahore).';
+    }
+    return 'I couldn\'t reach the online assistant just now, so here are topics I can help with offline:\n• Filing an FIR\n• Arrest rights\n• Harassment\n• Cyber crime and blackmail\n• Evidence\n• Emergency numbers\nTry asking about one of these.';
   }
 
   @override
@@ -568,286 +720,437 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
     );
   }
 
-  // Tab 2: Self-Defense Videos
+  // Tab 2: Self-Defense
   Widget _buildSelfDefenseTab() {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        // Featured Video
-        Container(
-          height: 200,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            image: const DecorationImage(
-              image: NetworkImage(
-                'https://via.placeholder.com/400x200/2563EB/ffffff?text=Self-Defense+Tutorial',
+        Material(
+          color: AppColors.primary,
+          borderRadius: BorderRadius.circular(AppRadius.xl),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(AppRadius.xl),
+            onTap: () => _openYouTube('self defense basics for women'),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Self-defense basics',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        SizedBox(height: 6),
+                        Text(
+                          'The goal is always to break free and get to safety, not to fight.',
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 13,
+                            height: 1.4,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Container(
+                    width: 52,
+                    height: 52,
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.play_arrow,
+                      color: AppColors.primary,
+                      size: 30,
+                    ),
+                  ),
+                ],
               ),
-              fit: BoxFit.cover,
             ),
           ),
-          child: Stack(
+        ),
+        const SizedBox(height: 20),
+        const Text(
+          'Techniques',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Tap one to see the steps. Videos open in YouTube.',
+          style: TextStyle(fontSize: 12.5, color: AppColors.textMuted),
+        ),
+        const SizedBox(height: 12),
+        LayoutBuilder(
+          builder: (context, c) {
+            final cols = c.maxWidth >= 600 ? 3 : 2;
+            const gap = 12.0;
+            final w = (c.maxWidth - gap * (cols - 1)) / cols;
+            return Wrap(
+              spacing: gap,
+              runSpacing: gap,
+              children: [
+                for (final v in _selfDefenseVideos)
+                  SizedBox(width: w, child: _techniqueCard(v)),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppColors.warningSoft,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: const Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(20),
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Colors.transparent, Colors.black.withValues(alpha: 0.7)],
+              Icon(Iconsax.info_circle, size: 18, color: AppColors.warning),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Practise with a trained instructor. In real danger, press SOS and run to a crowded place.',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    color: AppColors.warning,
+                    height: 1.4,
                   ),
-                ),
-              ),
-              const Positioned(
-                bottom: 16,
-                left: 16,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Essential Self-Defense',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    SizedBox(height: 4),
-                    Text(
-                      'Complete guide for beginners',
-                      style: TextStyle(color: Colors.white70, fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
-              const Positioned(
-                bottom: 16,
-                right: 16,
-                child: CircleAvatar(
-                  backgroundColor: Colors.white,
-                  child: Icon(Icons.play_arrow, color: Color(0xFF1D4ED8)),
                 ),
               ),
             ],
           ),
         ),
+      ],
+    );
+  }
 
-        const SizedBox(height: 20),
-
-        const Text(
-          'Video Tutorials',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 5),
-        Text(
-          'Learn basic self-defense techniques',
-          style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-        ),
-
-        const SizedBox(height: 15),
-
-        // Videos Grid
-        GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
-            childAspectRatio: 0.8,
-          ),
-          itemCount: _selfDefenseVideos.length,
-          itemBuilder: (context, index) {
-            final video = _selfDefenseVideos[index];
-            return Card(
-              elevation: 2,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _techniqueCard(Map<String, dynamic> v) {
+    final level = v['level'] as String;
+    final (bg, fg) = switch (level) {
+      'Beginner' => (AppColors.successSoft, AppColors.success),
+      'Intermediate' => (AppColors.warningSoft, AppColors.warning),
+      _ => (AppColors.dangerSoft, AppColors.dangerDark),
+    };
+    return Material(
+      color: AppColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: AppColors.border),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => _showTechnique(v),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 children: [
-                  Expanded(
-                    flex: 3,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(12),
-                        ),
-                        color: Colors.blue.shade100,
-                        image: const DecorationImage(
-                          image: NetworkImage(
-                            'https://via.placeholder.com/200x150/2563EB/ffffff?text=Video',
-                          ),
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-                      child: Stack(
-                        children: [
-                          Container(
-                            decoration: BoxDecoration(
-                              borderRadius: const BorderRadius.vertical(
-                                top: Radius.circular(12),
-                              ),
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [
-                                  Colors.transparent,
-                                  Colors.black.withValues(alpha: 0.5),
-                                ],
-                              ),
-                            ),
-                          ),
-                          const Positioned(
-                            bottom: 8,
-                            right: 8,
-                            child: CircleAvatar(
-                              radius: 15,
-                              backgroundColor: Colors.white,
-                              child: Icon(
-                                Icons.play_arrow,
-                                size: 15,
-                                color: Color(0xFF1D4ED8),
-                              ),
-                            ),
-                          ),
-                          Positioned(
-                            top: 8,
-                            left: 8,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.blue.shade700,
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Text(
-                                video['duration'],
-                                style: const TextStyle(
-                                  fontSize: 8,
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: AppColors.primarySoft,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      v['icon'] as IconData,
+                      size: 20,
+                      color: AppColors.primary,
                     ),
                   ),
-                  Expanded(
-                    flex: 2,
-                    child: Padding(
-                      padding: const EdgeInsets.all(8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            video['title'],
-                            style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 2),
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.visibility,
-                                size: 8,
-                                color: Colors.grey.shade500,
-                              ),
-                              const SizedBox(width: 2),
-                              Text(
-                                video['views'],
-                                style: TextStyle(
-                                  fontSize: 8,
-                                  color: Colors.grey.shade600,
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 4,
-                                  vertical: 1,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: video['level'] == 'Beginner'
-                                      ? Colors.green.shade100
-                                      : video['level'] == 'Intermediate'
-                                      ? Colors.orange.shade100
-                                      : Colors.red.shade100,
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  video['level'],
-                                  style: TextStyle(
-                                    fontSize: 6,
-                                    fontWeight: FontWeight.bold,
-                                    color: video['level'] == 'Beginner'
-                                        ? Colors.green.shade700
-                                        : video['level'] == 'Intermediate'
-                                        ? Colors.orange.shade700
-                                        : Colors.red.shade700,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: bg,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      level,
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w600,
+                        color: fg,
                       ),
                     ),
                   ),
                 ],
               ),
-            );
-          },
-        ),
-
-        const SizedBox(height: 20),
-
-        // Tips Section
-        Card(
-          elevation: 4,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
+              const SizedBox(height: 12),
+              Text(
+                v['title'] as String,
+                maxLines: 2,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  height: 1.3,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '${(v['steps'] as List).length} steps',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textMuted,
+                ),
+              ),
+            ],
           ),
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+        ),
+      ),
+    );
+  }
+
+  void _showTechnique(Map<String, dynamic> v) {
+    final steps = (v['steps'] as List).cast<String>();
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.border,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                v['title'] as String,
+                style: const TextStyle(
+                  fontSize: 19,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 14),
+              for (var i = 0; i < steps.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      CircleAvatar(
+                        radius: 12,
+                        backgroundColor: AppColors.primarySoft,
+                        child: Text(
+                          '${i + 1}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          steps[i],
+                          style: const TextStyle(fontSize: 14, height: 1.4),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: FilledButton.icon(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _openYouTube(v['query'] as String);
+                  },
+                  icon: const Icon(Icons.play_circle_outline),
+                  label: const Text('Watch on YouTube'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Opens YouTube (app if installed, otherwise the browser) with tutorial
+  /// videos for [query].
+  Future<void> _openYouTube(String query) async {
+    final uri = Uri.parse(
+      'https://www.youtube.com/results?search_query=${Uri.encodeQueryComponent(query)}',
+    );
+    var ok = false;
+    try {
+      ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {}
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            "Couldn't open YouTube. Check your internet connection.",
+          ),
+        ),
+      );
+    }
+  }
+
+  // Tab 3: Legal Assistant Chatbot
+  Widget _buildLegalAssistantTab() {
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+          decoration: const BoxDecoration(
+            color: AppColors.surface,
+            border: Border(bottom: BorderSide(color: AppColors.border)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AppColors.primarySoft,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Iconsax.judge,
+                  color: AppColors.primary,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Legal assistant',
+                      style: TextStyle(
+                        fontSize: 15.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      _gemini.hasApiKey
+                          ? 'AI help with Pakistani law · not a lawyer'
+                          : 'Offline answers · AI key not set',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'New chat',
+                onPressed: _botTyping ? null : _clearChat,
+                icon: const Icon(Iconsax.refresh, size: 20),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            controller: _chatScroll,
+            padding: const EdgeInsets.all(16),
+            itemCount: _chatMessages.length + (_botTyping ? 1 : 0),
+            itemBuilder: (context, index) {
+              if (index >= _chatMessages.length) return _typingBubble();
+              return _chatBubble(_chatMessages[index]);
+            },
+          ),
+        ),
+        if (_chatMessages.length <= 2)
+          SizedBox(
+            height: 48,
+            child: ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              scrollDirection: Axis.horizontal,
               children: [
-                const Text(
-                  'Self-Defense Tips',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                _buildSuggestionChip('How do I file an FIR?'),
+                _buildSuggestionChip('Police refused my FIR'),
+                _buildSuggestionChip('Someone is blackmailing me online'),
+                _buildSuggestionChip('Harassment at work'),
+                _buildSuggestionChip('My rights if arrested'),
+                _buildSuggestionChip('Free legal help'),
+              ],
+            ),
+          ),
+        Container(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+          decoration: const BoxDecoration(
+            color: AppColors.surface,
+            border: Border(top: BorderSide(color: AppColors.border)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _chatController,
+                    minLines: 1,
+                    maxLines: 4,
+                    textCapitalization: TextCapitalization.sentences,
+                    textInputAction: TextInputAction.send,
+                    decoration: InputDecoration(
+                      hintText: 'Ask about your rights…',
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(24),
+                        borderSide: const BorderSide(color: AppColors.border),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(24),
+                        borderSide: const BorderSide(color: AppColors.border),
+                      ),
+                    ),
+                    onSubmitted: (_) => _sendMessage(),
+                  ),
                 ),
-                const SizedBox(height: 15),
-                _buildTipRow(
-                  icon: Iconsax.eye,
-                  title: 'Stay Aware',
-                  description: 'Always be alert of your surroundings',
-                ),
-                const SizedBox(height: 10),
-                _buildTipRow(
-                  icon: Iconsax.activity,
-                  title: 'Create Distance',
-                  description: 'Put space between you and threat',
-                ),
-                const SizedBox(height: 10),
-                _buildTipRow(
-                  icon: Iconsax.volume_high,
-                  title: 'Make Noise',
-                  description: 'Shout loudly to attract attention',
-                ),
-                const SizedBox(height: 10),
-                _buildTipRow(
-                  icon: Iconsax.flash,
-                  title: 'Target Areas',
-                  description: 'Eyes, nose, throat, groin',
+                const SizedBox(width: 8),
+                Material(
+                  color: _botTyping ? AppColors.border : AppColors.primary,
+                  shape: const CircleBorder(),
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: _botTyping ? null : () => _sendMessage(),
+                    child: const SizedBox(
+                      width: 46,
+                      height: 46,
+                      child: Icon(
+                        Iconsax.send_1,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -857,238 +1160,112 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
     );
   }
 
-  // Tab 3: Legal Assistant Chatbot
-  Widget _buildLegalAssistantTab() {
-    return Column(
-      children: [
-        // Chat Header
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: const Color(0xFF1D4ED8).withValues(alpha: 0.1),
-            border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
-          ),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(10),
+  Widget _chatBubble(Map<String, dynamic> message) {
+    final isBot = message['sender'] == 'bot';
+    final maxW = MediaQuery.sizeOf(context).width * 0.78;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        mainAxisAlignment: isBot
+            ? MainAxisAlignment.start
+            : MainAxisAlignment.end,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          if (isBot) ...[
+            const CircleAvatar(
+              radius: 14,
+              backgroundColor: AppColors.primarySoft,
+              child: Icon(Iconsax.judge, size: 14, color: AppColors.primary),
+            ),
+            const SizedBox(width: 8),
+          ],
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: maxW.clamp(200.0, 560.0).toDouble(),
+            ),
+            child: GestureDetector(
+              onLongPress: () {
+                Clipboard.setData(
+                  ClipboardData(text: message['message'] as String),
+                );
+                ScaffoldMessenger.of(context)
+                    .showSnackBar(const SnackBar(content: Text('Copied')));
+              },
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1D4ED8),
-                  shape: BoxShape.circle,
+                  color: isBot ? AppColors.surface : AppColors.primary,
+                  border: isBot ? Border.all(color: AppColors.border) : null,
+                  borderRadius: BorderRadius.only(
+                    topLeft: const Radius.circular(16),
+                    topRight: const Radius.circular(16),
+                    bottomLeft: Radius.circular(isBot ? 4 : 16),
+                    bottomRight: Radius.circular(isBot ? 16 : 4),
+                  ),
                 ),
-                child: const Icon(
-                  Iconsax.message,
-                  color: Colors.white,
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 12),
-              const Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Legal Assistant',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      'Ask me about legal rights and procedures',
-                      style: TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.green.shade100,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 6,
-                      height: 6,
-                      decoration: const BoxDecoration(
-                        color: Colors.green,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Online',
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: Colors.green.shade700,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        // Chat Messages
-        Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: _chatMessages.length,
-            itemBuilder: (context, index) {
-              final message = _chatMessages[index];
-              final isBot = message['sender'] == 'bot';
-
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Row(
-                  mainAxisAlignment: isBot
-                      ? MainAxisAlignment.start
-                      : MainAxisAlignment.end,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (isBot) ...[
-                      Container(
-                        margin: const EdgeInsets.only(right: 8),
-                        child: CircleAvatar(
-                          radius: 16,
-                          backgroundColor: const Color(
-                            0xFF2563EB,
-                          ).withValues(alpha: 0.1),
-                          child: const Icon(
-                            Iconsax.cpu,
-                            size: 14,
-                            color: Color(0xFF1D4ED8),
-                          ),
+                    if (message['offline'] != null) ...[
+                      Text(
+                        'Offline answer · ${message['offline']}',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.warning,
                         ),
                       ),
+                      const SizedBox(height: 4),
                     ],
-                    Flexible(
-                      child: Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: isBot
-                              ? Colors.grey.shade100
-                              : const Color(0xFF1D4ED8),
-                          borderRadius: BorderRadius.circular(15).copyWith(
-                            bottomLeft: isBot ? const Radius.circular(5) : null,
-                            bottomRight: !isBot
-                                ? const Radius.circular(5)
-                                : null,
-                          ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              message['message'],
-                              style: TextStyle(
-                                color: isBot ? Colors.black87 : Colors.white,
-                                fontSize: 13,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Align(
-                              alignment: Alignment.bottomRight,
-                              child: Text(
-                                message['time'],
-                                style: TextStyle(
-                                  fontSize: 8,
-                                  color: isBot
-                                      ? Colors.grey.shade500
-                                      : Colors.white70,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
+                    SelectableText(
+                      message['message'] as String,
+                      style: TextStyle(
+                        color: isBot ? AppColors.text : Colors.white,
+                        fontSize: 14,
+                        height: 1.4,
                       ),
                     ),
-                    if (!isBot) ...[
-                      const SizedBox(width: 8),
-                      CircleAvatar(
-                        radius: 16,
-                        backgroundColor: Colors.grey.shade200,
-                        child: const Icon(
-                          Icons.person,
-                          size: 14,
-                          color: Colors.grey,
-                        ),
+                    const SizedBox(height: 4),
+                    Text(
+                      (message['time'] ?? '') as String,
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        color: isBot ? AppColors.textSubtle : Colors.white70,
                       ),
-                    ],
+                    ),
                   ],
                 ),
-              );
-            },
+              ),
+            ),
           ),
-        ),
+        ],
+      ),
+    );
+  }
 
-        // Suggested Questions
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          height: 60,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            children: [
-              _buildSuggestionChip('How to file FIR?'),
-              _buildSuggestionChip('My rights during arrest'),
-              _buildSuggestionChip('Self-defense tips'),
-              _buildSuggestionChip('Evidence collection'),
-              _buildSuggestionChip('Emergency contacts'),
-            ],
+  Widget _typingBubble() {
+    return const Padding(
+      padding: EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 14,
+            backgroundColor: AppColors.primarySoft,
+            child: Icon(Iconsax.judge, size: 14, color: AppColors.primary),
           ),
-        ),
-
-        // Message Input
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.grey.withValues(alpha: 0.1),
-                blurRadius: 10,
-                offset: const Offset(0, -5),
-              ),
-            ],
+          SizedBox(width: 8),
+          SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
           ),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _chatController,
-                  decoration: InputDecoration(
-                    hintText: 'Type your question...',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(25),
-                      borderSide: BorderSide.none,
-                    ),
-                    filled: true,
-                    fillColor: Colors.grey.shade100,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 12,
-                    ),
-                  ),
-                  onSubmitted: (_) => _sendMessage(),
-                ),
-              ),
-              const SizedBox(width: 8),
-              CircleAvatar(
-                radius: 22,
-                backgroundColor: const Color(0xFF1D4ED8),
-                child: IconButton(
-                  icon: const Icon(Icons.send, color: Colors.white, size: 18),
-                  onPressed: _sendMessage,
-                ),
-              ),
-            ],
+          SizedBox(width: 8),
+          Text(
+            'Thinking…',
+            style: TextStyle(color: AppColors.textMuted, fontSize: 13),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -1096,13 +1273,8 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: ActionChip(
-        label: Text(label, style: const TextStyle(fontSize: 12)),
-        onPressed: () {
-          setState(() {
-            _chatController.text = label;
-          });
-        },
-        backgroundColor: Colors.grey.shade100,
+        label: Text(label, style: const TextStyle(fontSize: 12.5)),
+        onPressed: _botTyping ? null : () => _sendMessage(label),
       ),
     );
   }

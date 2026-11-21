@@ -62,8 +62,9 @@ class CallHandlerService {
   static String normalizeNumber(String raw) {
     var digits = raw.replaceAll(RegExp(r'[^\d]'), '');
     if (digits.startsWith('0092')) digits = digits.substring(4);
-    if (digits.startsWith('92') && digits.length > 10)
+    if (digits.startsWith('92') && digits.length > 10) {
       digits = digits.substring(2);
+    }
     if (digits.startsWith('0')) digits = digits.substring(1);
     return digits;
   }

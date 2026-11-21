@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:iconsax/iconsax.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../services/auth_service.dart';
 import '../services/sos_service.dart';
 import '../theme/app_theme.dart';
 import '../theme/responsive.dart';
@@ -31,6 +32,8 @@ class _CitizenHomeScreenState extends State<CitizenHomeScreen> {
     // stop and ask during an emergency.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _sosService.requestPermissions().catchError((_) => false);
+      // Older accounts: add their (hashed) email/CNIC to the signup registry.
+      AuthService().ensureRegistryForCurrentUser();
     });
   }
 

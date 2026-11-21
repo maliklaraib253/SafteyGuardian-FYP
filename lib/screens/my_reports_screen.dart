@@ -426,6 +426,7 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
             const SizedBox(height: 16),
             _progress(status),
             const SizedBox(height: 16),
+            ..._policeUpdates(r),
             _detailRow(
               Icons.label_outline,
               'Category',
@@ -499,7 +500,7 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   itemCount: images.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  separatorBuilder: (_, _) => const SizedBox(width: 8),
                   itemBuilder: (_, i) => ClipRRect(
                     borderRadius: BorderRadius.circular(10),
                     child: Image.network(
@@ -507,7 +508,7 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
                       width: 110,
                       height: 110,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
+                      errorBuilder: (_, _, _) => Container(
                         width: 110,
                         color: Colors.grey.shade200,
                         child: const Icon(Icons.broken_image),
@@ -531,6 +532,90 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
         ),
       ),
     );
+  }
+
+  /// Police remarks and the history of status changes, newest first.
+  List<Widget> _policeUpdates(Map<String, dynamic> r) {
+    final history = (r['statusHistory'] is List)
+        ? (r['statusHistory'] as List)
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList()
+        : <Map<String, dynamic>>[];
+    history.sort((a, b) {
+      final ta = a['at'] is Timestamp
+          ? (a['at'] as Timestamp).toDate()
+          : DateTime(1970);
+      final tb = b['at'] is Timestamp
+          ? (b['at'] as Timestamp).toDate()
+          : DateTime(1970);
+      return tb.compareTo(ta);
+    });
+    final latest = (r['policeRemarks'] ?? '').toString().trim();
+    if (latest.isEmpty && history.isEmpty) return const [];
+
+    return [
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: const Color(0xFFEFF6FF),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(
+                  Icons.local_police_outlined,
+                  size: 18,
+                  color: Color(0xFF1D4ED8),
+                ),
+                SizedBox(width: 6),
+                Text(
+                  'Police updates',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF1E3A8A),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            if (history.isEmpty)
+              Text(latest)
+            else
+              for (final h in history)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          _statusChip((h['status'] ?? '').toString()),
+                          const SizedBox(width: 8),
+                          if (h['at'] is Timestamp)
+                            Text(
+                              _formatDate((h['at'] as Timestamp).toDate()),
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text((h['remarks'] ?? '').toString()),
+                    ],
+                  ),
+                ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 16),
+    ];
   }
 
   Widget _progress(String status) {

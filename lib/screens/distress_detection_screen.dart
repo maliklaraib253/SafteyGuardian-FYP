@@ -1,13 +1,12 @@
 import 'dart:async';
-import 'dart:math';
+
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:iconsax/iconsax.dart';
-import 'package:sensors_plus/sensors_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:permission_handler/permission_handler.dart';
+
 import '../services/voice_distress_service.dart';
+import '../services/distress_monitor.dart';
 
 class DistressDetectionScreen extends StatefulWidget {
   const DistressDetectionScreen({super.key});
@@ -45,14 +44,10 @@ class _DistressDetectionScreenState extends State<DistressDetectionScreen>
   String _lastDetectedDistress = 'Normal';
 
   // Countdown timer for Auto-SOS: 1 minute (60 seconds)
-  static const int _autoSosCountdownDuration = 60;
   Timer? _countdownTimer;
-  int _countdownSeconds = _autoSosCountdownDuration;
 
   // Real accelerometer stream + state to prevent dialog spam
-  StreamSubscription<AccelerometerEvent>? _accelSub;
-  bool _dialogShowing = false;
-  DateTime _lastTriggerAt = DateTime.fromMillisecondsSinceEpoch(0);
+  StreamSubscription<MotionReading>? _accelSub;
 
   // Distress patterns (for demo)
   final List<Map<String, dynamic>> _distressEvents = [
@@ -102,7 +97,8 @@ class _DistressDetectionScreenState extends State<DistressDetectionScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
       if (_isDetectionActive) {
         _startBackgroundSentinel();
       }
@@ -110,50 +106,28 @@ class _DistressDetectionScreenState extends State<DistressDetectionScreen>
   }
 
   // Starts foreground service so Android keeps sensor monitoring alive when app is minimized
+  // Detection runs app-wide in DistressMonitor (keeps going after this
+  // screen or the whole app is closed); this screen only shows its state.
   Future<void> _startBackgroundSentinel() async {
-    try {
-      FlutterForegroundTask.init(
-        androidNotificationOptions: AndroidNotificationOptions(
-          channelId: 'distress_sentinel_channel',
-          channelName: 'SafetyGuardian Distress Sentinel',
-          channelDescription: 'Monitors violent motion, falls, and emergencies in background',
-          channelImportance: NotificationChannelImportance.MAX,
-          priority: NotificationPriority.MAX,
-        ),
-        iosNotificationOptions: const IOSNotificationOptions(),
-        foregroundTaskOptions: ForegroundTaskOptions(
-          eventAction: ForegroundTaskEventAction.nothing(),
-          autoRunOnBoot: false,
-          autoRunOnMyPackageReplaced: false,
-          allowWakeLock: true,
-          allowWifiLock: false,
-        ),
-      );
-
-      if (await FlutterForegroundTask.isRunningService) return;
-
-      await FlutterForegroundTask.startService(
-        notificationTitle: 'SafetyGuardian — Background Distress Sentinel',
-        notificationText: 'Monitoring active in background. Tap if emergency.',
-      );
-    } catch (e) {
-      debugPrint('[DistressSentinel] startService error: $e');
-    }
+    await DistressMonitor.instance.start();
   }
 
   Future<void> _stopBackgroundSentinel() async {
-    try {
-      if (await FlutterForegroundTask.isRunningService) {
-        await FlutterForegroundTask.stopService();
-      }
-    } catch (_) {}
+    await DistressMonitor.instance.stop();
   }
 
   // Load saved state or default to always on, starting sensors automatically
   Future<void> _initializeMonitoringState() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final enabled = prefs.getBool('distress_detection_always_on') ?? true;
+      final saved = prefs.getBool(DistressMonitor.enabledKey);
+      final enabled = saved ?? true;
+      if (saved == null) {
+        // First visit: detection is on by default, so remember it and keep
+        // it running in the background from now on.
+        await prefs.setBool(DistressMonitor.enabledKey, true);
+      }
+      _isVoiceMonitoringActive = DistressMonitor.instance.isVoiceEnabled;
       if (!mounted) return;
       setState(() {
         _isDetectionActive = enabled;
@@ -186,42 +160,12 @@ class _DistressDetectionScreenState extends State<DistressDetectionScreen>
   // is ~9.8 m/s^2 (gravity); shaking/running pushes it well above that.
   void _startSensorMonitoring() {
     _accelSub?.cancel();
-    _accelSub = accelerometerEventStream().listen((event) {
+    _accelSub = DistressMonitor.instance.motionStream.listen((reading) {
       if (!mounted || !_isDetectionActive) return;
-
-      final magnitude = sqrt(
-        event.x * event.x + event.y * event.y + event.z * event.z,
-      );
-      final excess = (magnitude - 9.8).abs();
-      final normalized = (excess / 20).clamp(0.0, 1.0);
-
-      String activity;
-      if (normalized > 0.7) {
-        activity = 'Violent Movement';
-      } else if (normalized > 0.4) {
-        activity = 'Running';
-      } else if (normalized > 0.15) {
-        activity = 'Walking';
-      } else {
-        activity = 'Stationary';
-      }
-
       setState(() {
-        _movementIntensity = normalized;
-        _currentActivity = activity;
+        _movementIntensity = reading.intensity;
+        _currentActivity = reading.activity;
       });
-
-      // Trigger the "Are you safe?" prompt if movement is violent AND we
-      // haven't already shown it recently (10-second cooldown).
-      final now = DateTime.now();
-      if (normalized > 0.7 &&
-          !_dialogShowing &&
-          now.difference(_lastTriggerAt).inSeconds > 10) {
-        _lastTriggerAt = now;
-        _showDistressDialog(
-          reason: 'Violent motion or hard impact detected',
-        );
-      }
     });
   }
 
@@ -242,7 +186,9 @@ class _DistressDetectionScreenState extends State<DistressDetectionScreen>
       });
     });
 
-    _transcriptionSub = _voiceService.liveTranscriptionStream.listen((transcript) {
+    _transcriptionSub = _voiceService.liveTranscriptionStream.listen((
+      transcript,
+    ) {
       if (!mounted) return;
       setState(() {
         _latestTranscript = transcript;
@@ -251,280 +197,24 @@ class _DistressDetectionScreenState extends State<DistressDetectionScreen>
 
     _voiceDistressSub = _voiceService.distressEventStream.listen((event) {
       if (!mounted || !_isDetectionActive) return;
-      setState(() {
-        _lastDetectedDistress = event.description;
-      });
-      final now = DateTime.now();
-      if (!_dialogShowing && now.difference(_lastTriggerAt).inSeconds > 5) {
-        _lastTriggerAt = now;
-        _showDistressDialog(reason: event.description);
-      }
+      // The alert itself is shown app-wide by DistressMonitor.
+      setState(() => _lastDetectedDistress = event.description);
     });
-
-    final ok = await _voiceService.startMonitoring();
-    if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Microphone access required for voice & scream detection',
-          ),
-          backgroundColor: Colors.orange,
-        ),
-      );
-    }
   }
 
+  // Only stops this screen from listening to updates; detection itself
+  // keeps running in DistressMonitor.
   void _stopVoiceMonitoring() {
     _soundLevelSub?.cancel();
     _voiceDistressSub?.cancel();
     _transcriptionSub?.cancel();
-    _voiceService.stopMonitoring();
   }
 
   void _showDistressDialog({
     String reason = 'Unusual activity: Sudden movement or high noise',
   }) {
-    if (_dialogShowing) return;
-    _dialogShowing = true;
-    _countdownSeconds = _autoSosCountdownDuration;
-    _countdownTimer?.cancel();
-
-    // 1. Instantly bring app to front over whatever other app user is using!
-    try {
-      const MethodChannel('com.safetyguardian/app_control').invokeMethod('bringToFront');
-    } catch (_) {}
-    try {
-      FlutterForegroundTask.launchApp('/distress');
-    } catch (_) {}
-
-    // 2. Update Foreground Service notification with urgent alert
-    try {
-      FlutterForegroundTask.updateService(
-        notificationTitle: '🚨 EMERGENCY ALERT: Are you safe?',
-        notificationText: 'Distress detected! Tap to respond or Auto-SOS calls in 60s.',
-      );
-    } catch (_) {}
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogCtx) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            _countdownTimer ??= Timer.periodic(const Duration(seconds: 1), (timer) {
-              if (!mounted) {
-                timer.cancel();
-                return;
-              }
-              if (_countdownSeconds <= 1) {
-                timer.cancel();
-                _countdownTimer = null;
-                if (_dialogShowing && Navigator.canPop(dialogCtx)) {
-                  Navigator.pop(dialogCtx);
-                  _dialogShowing = false;
-                  _addAlert('🚨 AUTO-SOS DISPATCHED (Incapacitated - 60s Timeout)');
-                  _activateEmergency();
-                }
-              } else {
-                setDialogState(() {
-                  _countdownSeconds--;
-                });
-              }
-            });
-
-            return AlertDialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(24),
-              ),
-              title: Column(
-                children: [
-                  Container(
-                    width: 72,
-                    height: 72,
-                    decoration: BoxDecoration(
-                      color: Colors.red.shade50,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.red.shade300, width: 2.5),
-                    ),
-                    child: Center(
-                      child: Text(
-                        '$_countdownSeconds',
-                        style: TextStyle(
-                          fontSize: 28,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.red.shade700,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Are you safe?',
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.red.shade50,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.red.shade200),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.warning_amber_rounded,
-                          color: Colors.red,
-                          size: 22,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            reason,
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.red.shade800,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Auto-SOS will be sent in $_countdownSeconds seconds if not cancelled.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: () {
-                            _countdownTimer?.cancel();
-                            _countdownTimer = null;
-                            Navigator.pop(dialogCtx);
-                            _dialogShowing = false;
-                            _addAlert('User confirmed SAFE');
-                            try {
-                              FlutterForegroundTask.updateService(
-                                notificationTitle: 'SafetyGuardian — Background Distress Sentinel',
-                                notificationText: 'Monitoring active in background. Tap if emergency.',
-                              );
-                            } catch (_) {}
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            decoration: BoxDecoration(
-                              color: Colors.green.shade50,
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(color: Colors.green.shade300),
-                            ),
-                            child: Column(
-                              children: [
-                                Icon(
-                                  Icons.check_circle,
-                                  color: Colors.green.shade600,
-                                  size: 28,
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  "I'm Safe",
-                                  style: TextStyle(
-                                    color: Colors.green.shade700,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: () {
-                            _countdownTimer?.cancel();
-                            _countdownTimer = null;
-                            Navigator.pop(dialogCtx);
-                            _dialogShowing = false;
-                            _activateEmergency();
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            decoration: BoxDecoration(
-                              color: Colors.red.shade50,
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(color: Colors.red.shade300),
-                            ),
-                            child: Column(
-                              children: [
-                                Icon(
-                                  Icons.warning,
-                                  color: Colors.red.shade600,
-                                  size: 28,
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  "Help Needed",
-                                  style: TextStyle(
-                                    color: Colors.red.shade700,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  TextButton(
-                    onPressed: () {
-                      _countdownTimer?.cancel();
-                      _countdownTimer = null;
-                      Navigator.pop(dialogCtx);
-                      _dialogShowing = false;
-                      _addAlert('False alarm - dismissed');
-                      try {
-                        FlutterForegroundTask.updateService(
-                          notificationTitle: 'SafetyGuardian — Background Distress Sentinel',
-                          notificationText: 'Monitoring active in background. Tap if emergency.',
-                        );
-                      } catch (_) {}
-                    },
-                    child: const Text('False Alarm'),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    ).then((_) {
-      _countdownTimer?.cancel();
-      _countdownTimer = null;
-      _dialogShowing = false;
-    });
-  }
-
-  void _activateEmergency() {
-    _addAlert('🚨 EMERGENCY ACTIVATED');
-    // Open the SOS screen and start SOS there, so an automatic SOS behaves
-    // exactly like the SOS button: live call progress, call blocking, and
-    // "I'm safe now" to stop it.
-    if (!mounted) return;
-    Navigator.pushNamed(context, '/sos', arguments: 'activate');
+    // Same full-screen alert that appears when the app is closed.
+    DistressMonitor.instance.trigger(reason);
   }
 
   void _addAlert(String message) {
@@ -663,8 +353,12 @@ class _DistressDetectionScreenState extends State<DistressDetectionScreen>
                                   }
                                 });
                                 try {
-                                  final prefs = await SharedPreferences.getInstance();
-                                  await prefs.setBool('distress_detection_always_on', value);
+                                  final prefs =
+                                      await SharedPreferences.getInstance();
+                                  await prefs.setBool(
+                                    'distress_detection_always_on',
+                                    value,
+                                  );
                                 } catch (_) {}
                                 if (value) {
                                   _startSensorMonitoring();
@@ -716,8 +410,8 @@ class _DistressDetectionScreenState extends State<DistressDetectionScreen>
                           subtitle: !_isVoiceMonitoringActive
                               ? 'Voice monitoring off'
                               : _soundLevel > 0.7
-                                  ? 'Loud noise detected (${(_soundLevel * 100).toInt()}%)'
-                                  : 'Active - Normal (${(_soundLevel * 100).toInt()}%)',
+                              ? 'Loud noise detected (${(_soundLevel * 100).toInt()}%)'
+                              : 'Active - Normal (${(_soundLevel * 100).toInt()}%)',
                           trailingSwitch: Switch(
                             value: _isVoiceMonitoringActive,
                             onChanged: (val) {
@@ -728,10 +422,9 @@ class _DistressDetectionScreenState extends State<DistressDetectionScreen>
                                   _latestTranscript = '';
                                 }
                               });
+                              DistressMonitor.instance.setVoiceEnabled(val);
                               if (val) {
                                 _startVoiceMonitoring();
-                              } else {
-                                _stopVoiceMonitoring();
                               }
                             },
                             activeThumbColor: Colors.blue,
@@ -1195,7 +888,9 @@ class _DistressDetectionScreenState extends State<DistressDetectionScreen>
                         onPressed: () async {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
-                              content: Text('🎤 Listening for 6s... say "Bachao", "Maar dunga", etc.'),
+                              content: Text(
+                                '🎤 Listening for 6s... say "Bachao", "Maar dunga", etc.',
+                              ),
                               duration: Duration(seconds: 3),
                             ),
                           );

@@ -22,6 +22,8 @@ import android.telephony.SmsManager
 import android.telephony.SubscriptionManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.embedding.engine.FlutterEngineCache
+import io.flutter.embedding.engine.dart.DartExecutor
 import io.flutter.plugin.common.MethodChannel
 
 /**
@@ -36,6 +38,28 @@ import io.flutter.plugin.common.MethodChannel
  *                                     whether the network accepted the message)
  */
 class SafetyGuardianActivity : FlutterActivity() {
+
+    companion object {
+        private const val ENGINE_ID = "safety_guardian_engine"
+    }
+
+    /**
+     * One Flutter engine for the whole app process, kept in a cache.
+     * When the user closes the app (back button or swipes it from Recents)
+     * only this screen goes away - the engine, and with it Distress Detection,
+     * keeps running as long as the foreground service keeps the process alive.
+     * Opening the app again re-attaches to the same running engine.
+     */
+    override fun provideFlutterEngine(context: Context): FlutterEngine {
+        FlutterEngineCache.getInstance().get(ENGINE_ID)?.let { return it }
+        // The FlutterEngine constructor registers all plugins automatically.
+        val engine = FlutterEngine(context.applicationContext)
+        engine.dartExecutor.executeDartEntrypoint(DartExecutor.DartEntrypoint.createDefault())
+        FlutterEngineCache.getInstance().put(ENGINE_ID, engine)
+        return engine
+    }
+
+    override fun shouldDestroyEngineWithHost(): Boolean = false
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -137,7 +161,7 @@ class SafetyGuardianActivity : FlutterActivity() {
             if (finished) return
             finished = true
             Log.i("SG_SMS", "SMS to $phone -> ok=$ok error=$error")
-            try { unregisterReceiver(receiver) } catch (_: Exception) {}
+            try { applicationContext.unregisterReceiver(receiver) } catch (_: Exception) {}
             done(ok, error)
         }
 
@@ -154,16 +178,16 @@ class SafetyGuardianActivity : FlutterActivity() {
         }
         val filter = IntentFilter(action)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            applicationContext.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
             @Suppress("UnspecifiedRegisterReceiverFlag")
-            registerReceiver(receiver, filter)
+            applicationContext.registerReceiver(receiver, filter)
         }
 
         val flags = PendingIntent.FLAG_ONE_SHOT or
             (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
         val sentIntent = PendingIntent.getBroadcast(
-            this, smsRequestCode, Intent(action).setPackage(packageName), flags
+            applicationContext, smsRequestCode, Intent(action).setPackage(packageName), flags
         )
 
         try {
@@ -269,7 +293,7 @@ class SafetyGuardianActivity : FlutterActivity() {
 
     private fun callWithIntent(uri: Uri): String? {
         return try {
-            startActivity(Intent(Intent.ACTION_CALL, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            applicationContext.startActivity(Intent(Intent.ACTION_CALL, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             null
         } catch (e: Exception) {
             "call failed: ${e.message}"
@@ -308,14 +332,14 @@ class SafetyGuardianActivity : FlutterActivity() {
     }
 
     private fun bringToFront() {
-        val intent = Intent(this, SafetyGuardianActivity::class.java).apply {
+        val intent = Intent(applicationContext, SafetyGuardianActivity::class.java).apply {
             addFlags(
                 Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
                     Intent.FLAG_ACTIVITY_NEW_TASK or
                     Intent.FLAG_ACTIVITY_SINGLE_TOP
             )
         }
-        startActivity(intent)
+        applicationContext.startActivity(intent)
     }
 
     /**

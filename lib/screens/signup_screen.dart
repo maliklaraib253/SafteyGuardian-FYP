@@ -102,85 +102,52 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
     final email = _emailController.text.trim();
     final cnic = _cnicController.text.trim();
-    final rawCnic = cnic.replaceAll(RegExp(r'[^0-9]'), '');
 
     try {
-      // 1. Safe non-blocking check on Firestore for existing verified email
+      // 1. Email already registered and verified? (private registry lookup:
+      //    other users' profiles can't be read.)
       try {
-        final emailQuery = await FirebaseFirestore.instance
-            .collection('users')
-            .where('email', isEqualTo: email.toLowerCase())
-            .limit(1)
-            .get()
+        final emailTaken = await _authService
+            .isEmailRegistered(email)
             .timeout(const Duration(seconds: 4));
-
-        if (emailQuery.docs.isNotEmpty) {
-          final data = emailQuery.docs.first.data();
-          if (data['isIdentityVerified'] == true) {
-            if (mounted) {
-              setState(() {
-                _isCheckingAvailability = false;
-                _emailTaken = true;
-                _step1Error = 'This email is already registered and verified. Please sign in instead.';
-              });
-              _formKey.currentState?.validate();
-            }
-            return;
+        if (emailTaken) {
+          if (mounted) {
+            setState(() {
+              _isCheckingAvailability = false;
+              _emailTaken = true;
+              _step1Error = 'This email is already registered and verified. Please sign in instead.';
+            });
+            _formKey.currentState?.validate();
           }
+          return;
         }
       } catch (e) {
-        debugPrint('Firestore email check note (non-blocking): $e');
+        debugPrint('Registry email check note (non-blocking): $e');
       }
 
-      // 2. Safe non-blocking check on Firestore for existing verified CNIC
+      // 2. CNIC already linked to a DIFFERENT verified account?
       try {
-        final cnicQuery = await FirebaseFirestore.instance
-            .collection('users')
-            .where('cnic', isEqualTo: cnic)
-            .limit(1)
+        final cnicDoc = await FirebaseFirestore.instance
+            .collection('registry')
+            .doc(AuthService.cnicKey(cnic))
             .get()
             .timeout(const Duration(seconds: 4));
-
-        DocumentSnapshot<Map<String, dynamic>>? existingCnicDoc;
-        if (cnicQuery.docs.isNotEmpty) {
-          existingCnicDoc = cnicQuery.docs.first;
-        } else if (rawCnic.isNotEmpty && rawCnic != cnic) {
-          final rawCnicQuery = await FirebaseFirestore.instance
-              .collection('users')
-              .where('cnic', isEqualTo: rawCnic)
-              .limit(1)
-              .get()
-              .timeout(const Duration(seconds: 4));
-          if (rawCnicQuery.docs.isNotEmpty) {
-            existingCnicDoc = rawCnicQuery.docs.first;
+        final d = cnicDoc.data();
+        if (cnicDoc.exists &&
+            d?['identityVerified'] == true &&
+            d?['emailKey'] != AuthService.emailKey(email)) {
+          if (mounted) {
+            setState(() {
+              _isCheckingAvailability = false;
+              _cnicTaken = true;
+              _step1Error = 'This CNIC is already registered to another verified account. Please sign in with your registered email.';
+            });
+            _formKey.currentState?.validate();
           }
-        }
-
-        if (existingCnicDoc != null) {
-          final existingData = existingCnicDoc.data() ?? {};
-          final existingDocEmail = (existingData['email'] as String? ?? '')
-              .trim()
-              .toLowerCase();
-          final bool isExistingVerified =
-              existingData['isIdentityVerified'] == true;
-
-          // Only block if verified on a DIFFERENT email
-          if (isExistingVerified &&
-              existingDocEmail.isNotEmpty &&
-              existingDocEmail != email.toLowerCase()) {
-            if (mounted) {
-              setState(() {
-                _isCheckingAvailability = false;
-                _cnicTaken = true;
-                _step1Error = 'This CNIC is already registered to another verified account. Please sign in with your registered email.';
-              });
-              _formKey.currentState?.validate();
-            }
-            return;
-          }
+          return;
         }
       } catch (e) {
-        debugPrint('Firestore CNIC check note (non-blocking): $e');
+        debugPrint('Registry CNIC check note (non-blocking): $e');
       }
 
       // 3. Move cleanly to Step 2 (CNIC Verification)
@@ -397,10 +364,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
           }
         }
       }
-      if (user == null)
+      if (user == null) {
         throw Exception(
           'Registration failed: User session could not be authenticated.',
         );
+      }
       final uid = user.uid;
 
       // 2. Upload private CNIC reference image to protected storage
@@ -447,18 +415,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
         debugPrint('Subcollection save note: $e');
       }
 
-      // Clean up any stale unverified orphan documents with this CNIC from prior incomplete attempts
-      try {
-        final staleDocs = await FirebaseFirestore.instance
-            .collection('users')
-            .where('cnic', isEqualTo: cnic)
-            .get();
-        for (final doc in staleDocs.docs) {
-          if (doc.id != uid && doc.data()['isVerified'] != true) {
-            await doc.reference.delete().catchError((_) {});
-          }
-        }
-      } catch (_) {}
+      // Record email + CNIC (hashed) so future signups can't reuse them.
+      await _authService.ensureRegistry(uid: uid, email: email, cnic: cnic);
 
       // 5. Send verification email (police domain accounts skip this)
       if (!email.toLowerCase().endsWith('@police.gov.pk')) {

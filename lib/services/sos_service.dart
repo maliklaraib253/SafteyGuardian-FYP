@@ -320,8 +320,45 @@ class SosService {
       if (error.contains('permission')) break; // retrying won't help
       if (attempt == 1) await Future.delayed(const Duration(seconds: 5));
     }
+
+    // Backup route: the telephony plugin's own sender.
+    if (!error!.contains('permission')) {
+      final viaPlugin = await _sendViaPlugin(cleanPhone, message);
+      if (viaPlugin) {
+        debugPrint('✅ SMS sent to $cleanPhone (backup sender)');
+        onSmsResult?.call(cleanPhone, true, null);
+        return true;
+      }
+    }
     onSmsResult?.call(cleanPhone, false, error);
     return false;
+  }
+
+  /// Sends through the another_telephony plugin and waits up to 15 s for the
+  /// network's "sent" report.
+  Future<bool> _sendViaPlugin(String phone, String message) async {
+    final done = Completer<bool>();
+    try {
+      await telephony.sendSms(
+        to: phone,
+        message: message,
+        isMultipart: message.length > 160,
+        statusListener: (status) {
+          debugPrint('Backup SMS status for $phone: $status');
+          if (done.isCompleted) return;
+          if (status == SendStatus.SENT || status == SendStatus.DELIVERED) {
+            done.complete(true);
+          }
+        },
+      );
+    } catch (e) {
+      debugPrint('Backup SMS sender failed for $phone: $e');
+      return false;
+    }
+    return done.future.timeout(
+      const Duration(seconds: 15),
+      onTimeout: () => false,
+    );
   }
 
   /// Index of the contact currently being called (0-based), or -1 while
@@ -360,6 +397,9 @@ class SosService {
   /// so the SOS button, distress detection and companion mode can never run
   /// two SOS flows at the same time and double-text contacts.
   static bool _anySosRunning = false;
+
+  /// True while an SOS is in progress anywhere in the app.
+  static bool get anySosRunning => _anySosRunning;
 
   Future<void> startSos({bool sequential = true}) async {
     if (_anySosRunning) {
