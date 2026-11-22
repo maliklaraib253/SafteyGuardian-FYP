@@ -116,6 +116,11 @@ class _EmergencySOSScreenState extends State<EmergencySOSScreen>
     _ticker?.cancel();
     _countdownTimer?.cancel();
     _callHandlerService.stopListening();
+    // The SOS may keep running in the background; just stop talking to
+    // this (closed) screen.
+    SosService.onAutoRepeat = null;
+    SosService.onAutoRepeatDone = null;
+    SosService.onPoliceFallback = null;
     super.dispose();
   }
 
@@ -246,6 +251,11 @@ class _EmergencySOSScreenState extends State<EmergencySOSScreen>
   // Activate emergency mode
   void _activateEmergency() async {
     if (_isEmergencyActive) return;
+    if (SosService.sessionActive || SosService.anySosRunning) {
+      // Already running (e.g. started by distress detection): just show it.
+      await _attachToRunningSos();
+      return;
+    }
     _elapsed = Duration.zero;
     _ticker?.cancel();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -298,6 +308,7 @@ class _EmergencySOSScreenState extends State<EmergencySOSScreen>
         ),
       );
     };
+    _wireSosCallbacks();
     _sosService.onCalling = (i) {
       if (!mounted) return;
       if (i == -1) {
@@ -315,8 +326,9 @@ class _EmergencySOSScreenState extends State<EmergencySOSScreen>
         _isCalling = false;
       });
     };
+    var started = false;
     try {
-      await _sosService.startSos();
+      started = await _sosService.startSos();
     } finally {
       if (mounted) {
         setState(() {
@@ -327,13 +339,109 @@ class _EmergencySOSScreenState extends State<EmergencySOSScreen>
       }
     }
     if (!mounted) return;
+    if (!started) {
+      // Another SOS is still calling contacts: don't ask yet.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('An SOS is already in progress. Please wait.'),
+        ),
+      );
+      return;
+    }
 
-    // After all contacts tried, show response options
+    // Every contact (and police, if nobody answered) has been called:
+    // now ask how the user is.
     _showResponseOptions();
   }
 
+  /// Listens to the shared SOS (repeats, police fallback, end of a round).
+  void _wireSosCallbacks() {
+    SosService.onPoliceFallback = (reason) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: AppColors.danger,
+          duration: const Duration(seconds: 8),
+          content: Text(reason),
+        ),
+      );
+    };
+    SosService.onAutoRepeatDone = () {
+      if (!mounted) return;
+      setState(() => _cascadeDone = true);
+      _showResponseOptions();
+    };
+    SosService.onAutoRepeat = (round) {
+      if (!mounted) return;
+      // Close the old question while everyone is called again; it comes
+      // back when the calls are over.
+      if (_responseDialogOpen) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      setState(() {
+        _cascadeDone = false;
+        _callResults.clear();
+        _reachedIndex = null;
+        _callingIndex = null;
+        _emergencyStatus = 'NO RESPONSE - SOS REPEATED';
+        _statusColor = AppColors.danger;
+      });
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: AppColors.danger,
+          duration: const Duration(seconds: 8),
+          content: Text(
+            'No answer from you for ${SosService.noResponseRepeat.inMinutes} '
+            'minutes: SOS sent again (repeat $round of '
+            '${SosService.maxAutoRepeats}).',
+          ),
+        ),
+      );
+    };
+  }
+
+  /// Distress detection may have started the SOS while the app was in the
+  /// background. Show that running SOS instead of starting a second one.
+  Future<void> _attachToRunningSos() async {
+    if (_isEmergencyActive) return;
+    final started = SosService.startedAt ?? DateTime.now();
+    _elapsed = DateTime.now().difference(started);
+    _ticker?.cancel();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() => _elapsed += const Duration(seconds: 1));
+    });
+    setState(() {
+      _isEmergencyActive = true;
+      _isCalling = SosService.cascadeRunning;
+      _cascadeDone = !SosService.cascadeRunning;
+      _isLocationSharing = _sosService.isSharingLocation;
+      _emergencyStatus = 'EMERGENCY ACTIVE';
+      _statusColor = AppColors.danger;
+    });
+    _wireSosCallbacks();
+    _rejectedCalls = 0;
+    _callHandlerService.onCallRejected = (number) {
+      if (!mounted) return;
+      setState(() => _rejectedCalls++);
+    };
+    await _callHandlerService.startListening(
+      true,
+      trustedNumbers: _trustedContacts
+          .map((c) => (c['phone'] ?? '').toString())
+          .where((p) => p.isNotEmpty)
+          .toList(),
+    );
+    if (mounted && !SosService.cascadeRunning) _showResponseOptions();
+  }
+
+  bool _responseDialogOpen = false;
+
   // Show response options after emergency
   void _showResponseOptions() {
+    if (_responseDialogOpen || !_isEmergencyActive) return;
+    _responseDialogOpen = true;
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -352,7 +460,29 @@ class _EmergencySOSScreenState extends State<EmergencySOSScreen>
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 14, color: Colors.grey),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 8),
+            // If neither button is pressed, the SOS repeats by itself.
+            StreamBuilder<int>(
+              stream: Stream.periodic(const Duration(seconds: 1), (i) => i),
+              builder: (_, _) {
+                final at = SosService.nextAutoRepeat.value;
+                if (at == null) return const SizedBox.shrink();
+                final left = at.difference(DateTime.now());
+                if (left.isNegative) return const SizedBox.shrink();
+                final m = left.inMinutes;
+                final s = (left.inSeconds % 60).toString().padLeft(2, '0');
+                return Text(
+                  'No answer? SOS will be sent again in $m:$s',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.red.shade700,
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
             Row(
               children: [
                 Expanded(
@@ -431,7 +561,7 @@ class _EmergencySOSScreenState extends State<EmergencySOSScreen>
           ],
         ),
       ),
-    );
+    ).then((_) => _responseDialogOpen = false);
   }
 
   // Update emergency status based on user response
@@ -644,6 +774,7 @@ class _EmergencySOSScreenState extends State<EmergencySOSScreen>
                   padding: EdgeInsets.fromLTRB(pad, 16, pad, 28),
                   children: [
                     _buildStatusHeader(),
+                    if (active) _buildPoliceUnreachedBanner(),
                     const SizedBox(height: 20),
                     Center(
                       child: active ? _buildActiveRings() : _buildSosButton(),
@@ -1039,18 +1170,20 @@ class _EmergencySOSScreenState extends State<EmergencySOSScreen>
                     ),
                   ),
                 ),
-                Flexible(child: Text(
-                  _callingIndex == -1
-                      ? (_cascadeDone ? 'Dialer opened' : 'Opening dialer…')
-                      : (_reachedIndex != null ? 'Not needed' : 'Last'),
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                    color: _callingIndex == -1
-                        ? AppColors.danger
-                        : AppColors.textSubtle,
+                Flexible(
+                  child: Text(
+                    _callingIndex == -1
+                        ? (_cascadeDone ? 'Dialer opened' : 'Opening dialer…')
+                        : (_reachedIndex != null ? 'Not needed' : 'Last'),
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: _callingIndex == -1
+                          ? AppColors.danger
+                          : AppColors.textSubtle,
+                    ),
                   ),
-                )),
+                ),
               ],
             ),
           ],
@@ -1127,14 +1260,16 @@ class _EmergencySOSScreenState extends State<EmergencySOSScreen>
             ],
           ),
         ),
-        Flexible(child: Text(
-          status,
-          style: TextStyle(
-            fontSize: 12.5,
-            fontWeight: FontWeight.w600,
-            color: statusColor,
+        Flexible(
+          child: Text(
+            status,
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              color: statusColor,
+            ),
           ),
-        )),
+        ),
       ],
     );
   }
@@ -1311,6 +1446,70 @@ class _EmergencySOSScreenState extends State<EmergencySOSScreen>
       const SizedBox(height: 10),
       _buildCallPoliceButton(),
     ];
+  }
+
+  /// Shown while the app could not get a call through to Police 15 (Android
+  /// only opened the dialer). One big button to try again.
+  Widget _buildPoliceUnreachedBanner() {
+    return ValueListenableBuilder<bool>(
+      valueListenable: SosService.policeUnreached,
+      builder: (context, unreached, _) {
+        if (!unreached) return const SizedBox.shrink();
+        return Container(
+          margin: const EdgeInsets.only(top: 12),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            border: Border.all(color: AppColors.danger, width: 2),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Police 15 was NOT called',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.danger,
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Your contacts were asked to call 15 for you. '
+                'If you can, call now.',
+                style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                height: 56,
+                child: FilledButton.icon(
+                  key: const Key('sos_police_unreached_call'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.danger,
+                  ),
+                  onPressed: () {
+                    SosService.policeCalledManually();
+                    _sosService.makeCall('15');
+                  },
+                  icon: const Icon(Iconsax.call),
+                  label: const FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      'Call 15 now',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildCallPoliceButton() {

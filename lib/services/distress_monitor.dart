@@ -54,6 +54,21 @@ class DistressMonitor {
       StreamController<MotionReading>.broadcast();
   final StreamController<String> _log = StreamController<String>.broadcast();
 
+  /// Seconds the user has to answer "Are you safe?".
+  static const int alertSeconds = 60;
+
+  /// Seconds left on the "Are you safe?" countdown (null = no alert).
+  /// The countdown runs here, not in the alert screen, so it keeps going
+  /// while the app is in the background or the screen is locked.
+  final ValueNotifier<int?> secondsLeft = ValueNotifier<int?>(null);
+  Timer? _alertTimer;
+  String _alertReason = '';
+  String get alertReason => _alertReason;
+
+  static const MethodChannel _appControl = MethodChannel(
+    'com.safetyguardian/app_control',
+  );
+
   bool get isRunning => _running;
   bool get isVoiceEnabled => _voiceEnabled;
   Stream<MotionReading> get motionStream => _motion.stream;
@@ -140,8 +155,9 @@ class DistressMonitor {
   // ---------------------------------------------------------------------------
 
   void _onAccel(AccelerometerEvent event) {
-    final magnitude =
-        sqrt(event.x * event.x + event.y * event.y + event.z * event.z);
+    final magnitude = sqrt(
+      event.x * event.x + event.y * event.y + event.z * event.z,
+    );
     final normalized = ((magnitude - 9.8).abs() / 20).clamp(0.0, 1.0);
 
     final String activity;
@@ -166,34 +182,97 @@ class DistressMonitor {
     final now = DateTime.now();
     if (_alertOpen) return;
     if (now.difference(_lastTrigger) < const Duration(seconds: 15)) return;
-    if (SosService.anySosRunning) return; // already handling an emergency
+    // Already handling an emergency.
+    if (SosService.anySosRunning || SosService.sessionActive) return;
     _lastTrigger = now;
     _alertOpen = true;
     _log.add('⚠️ $reason');
     debugPrint('[DistressMonitor] trigger: $reason');
 
+    // 1. Start the countdown right away, whether or not the app is open.
+    _alertReason = reason;
+    secondsLeft.value = alertSeconds;
+    _alertTimer?.cancel();
+    _alertTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      final left = (secondsLeft.value ?? 0) - 1;
+      if (left <= 0) {
+        t.cancel();
+        startSosNow();
+        return;
+      }
+      secondsLeft.value = left;
+      if (left % 10 == 0) _showAlertNotification(left);
+    });
+
+    // 2. Get the user's attention: wake the screen, show the alert over the
+    // lock screen (full-screen notification) and try to open the app.
     try {
       FlutterForegroundTask.wakeUpScreen();
     } catch (_) {}
     try {
-      await const MethodChannel('com.safetyguardian/app_control')
-          .invokeMethod('bringToFront');
+      await _appControl.invokeMethod('setShowOnLockScreen', {'on': true});
+    } catch (_) {}
+    await _showAlertNotification(alertSeconds);
+    try {
+      await _appControl.invokeMethod('bringToFront');
+    } catch (_) {}
+
+    // 3. The alert screen only shows the countdown and the two buttons.
+    navigatorKey.currentState?.pushNamed('/distress-alert', arguments: reason);
+  }
+
+  Future<void> _showAlertNotification(int left) async {
+    final text = '$_alertReason. SOS starts in $left s unless you answer.';
+    try {
+      await _appControl.invokeMethod('showDistressAlert', {
+        'title': '🚨 Are you safe?',
+        'text': text,
+      });
     } catch (_) {}
     try {
       await FlutterForegroundTask.updateService(
         notificationTitle: '🚨 Are you safe?',
-        notificationText: '$reason. SOS starts in 60 s unless you respond.',
+        notificationText: text,
       );
     } catch (_) {}
+  }
 
-    final nav = navigatorKey.currentState;
-    if (nav == null) {
-      _alertOpen = false;
-      return;
-    }
-    await nav.pushNamed('/distress-alert', arguments: reason);
+  Future<void> _closeAlert() async {
+    _alertTimer?.cancel();
+    _alertTimer = null;
+    secondsLeft.value = null;
     _alertOpen = false;
+    try {
+      await _appControl.invokeMethod('cancelDistressAlert');
+      await _appControl.invokeMethod('setShowOnLockScreen', {'on': false});
+    } catch (_) {}
+    navigatorKey.currentState?.popUntil(
+      (route) => route.settings.name != '/distress-alert',
+    );
     await _restoreNotification();
+  }
+
+  /// "I'm safe" on the alert screen or its notification.
+  Future<void> respondSafe() async {
+    if (!_alertOpen) return;
+    _log.add('✅ User confirmed they are safe');
+    await _closeAlert();
+  }
+
+  /// "Get help now", or the countdown ran out: start the SOS.
+  Future<void> startSosNow() async {
+    if (!_alertOpen) return;
+    await _closeAlert();
+    _log.add('🚨 No answer - SOS started');
+    final resumed =
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+    if (!resumed) {
+      // App not on screen: Flutter doesn't build new screens in the
+      // background, so start the SOS here. The SOS screen attaches to it
+      // when the app is opened.
+      unawaited(SosService().startSos());
+    }
+    navigatorKey.currentState?.pushNamed('/sos', arguments: 'activate');
   }
 
   // ---------------------------------------------------------------------------
@@ -238,8 +317,10 @@ class DistressMonitor {
         types.add(ForegroundServiceTypes.location);
       }
       if (types.isEmpty) {
-        debugPrint('[DistressMonitor] no mic/location permission: '
-            'detection works only while the app is open');
+        debugPrint(
+          '[DistressMonitor] no mic/location permission: '
+          'detection works only while the app is open',
+        );
         return;
       }
 

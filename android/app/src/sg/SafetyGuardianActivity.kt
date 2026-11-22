@@ -2,6 +2,9 @@ package com.example.safety_guardian
 
 import android.Manifest
 import android.app.Activity
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -15,6 +18,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.WindowManager
 import android.provider.CallLog
 import android.telecom.PhoneAccountHandle
 import android.telecom.TelecomManager
@@ -69,6 +73,21 @@ class SafetyGuardianActivity : FlutterActivity() {
             when (call.method) {
                 "bringToFront" -> {
                     bringToFront()
+                    result.success(true)
+                }
+                "showDistressAlert" -> {
+                    showDistressAlert(
+                        call.argument<String>("title") ?: "Are you safe?",
+                        call.argument<String>("text") ?: ""
+                    )
+                    result.success(true)
+                }
+                "cancelDistressAlert" -> {
+                    cancelDistressAlert()
+                    result.success(true)
+                }
+                "setShowOnLockScreen" -> {
+                    setShowOnLockScreen(call.argument<Boolean>("on") ?: false)
                     result.success(true)
                 }
                 else -> result.notImplemented()
@@ -339,7 +358,100 @@ class SafetyGuardianActivity : FlutterActivity() {
                     Intent.FLAG_ACTIVITY_SINGLE_TOP
             )
         }
-        applicationContext.startActivity(intent)
+        try {
+            applicationContext.startActivity(intent)
+        } catch (e: Exception) {
+            // Android 10+ may block opening an activity from the background;
+            // the full-screen alert notification covers that case.
+            Log.w("SG_ALERT", "bringToFront blocked: ${e.message}")
+        }
+    }
+
+    private val alertChannelId = "distress_alert_channel"
+    private val alertNotificationId = 4711
+
+    /**
+     * High-priority "Are you safe?" notification with a full-screen intent:
+     * on a locked or idle phone Android opens the app over the lock screen
+     * (like an incoming call or alarm); otherwise it shows as a heads-up
+     * banner. Opening an activity directly from the background is blocked
+     * on Android 10+, so this is what makes the alert visible.
+     */
+    @Suppress("DEPRECATION")
+    private fun showDistressAlert(title: String, text: String) {
+        val ctx = applicationContext
+        val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            nm.getNotificationChannel(alertChannelId) == null
+        ) {
+            val channel = NotificationChannel(
+                alertChannelId,
+                "Distress alerts",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "\"Are you safe?\" countdown after distress is detected"
+                enableVibration(true)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            }
+            nm.createNotificationChannel(channel)
+        }
+        val open = Intent(ctx, SafetyGuardianActivity::class.java).addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+        )
+        val pending = PendingIntent.getActivity(
+            ctx,
+            alertNotificationId,
+            open,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(ctx, alertChannelId)
+        } else {
+            Notification.Builder(ctx).setPriority(Notification.PRIORITY_MAX)
+        }
+        builder
+            .setSmallIcon(ctx.applicationInfo.icon)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(Notification.BigTextStyle().bigText(text))
+            .setCategory(Notification.CATEGORY_ALARM)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(pending)
+            .setFullScreenIntent(pending, true)
+        try {
+            nm.notify(alertNotificationId, builder.build())
+        } catch (e: Exception) {
+            Log.w("SG_ALERT", "alert notification failed: ${e.message}")
+        }
+    }
+
+    private fun cancelDistressAlert() {
+        try {
+            val nm = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.cancel(alertNotificationId)
+        } catch (_: Exception) {}
+    }
+
+    /** Lets the alert appear over the lock screen and switch the screen on. */
+    @Suppress("DEPRECATION")
+    private fun setShowOnLockScreen(on: Boolean) {
+        runOnUiThread {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                    setShowWhenLocked(on)
+                    setTurnScreenOn(on)
+                } else {
+                    val flags = WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                        WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                    if (on) window.addFlags(flags) else window.clearFlags(flags)
+                }
+            } catch (_: Exception) {}
+        }
     }
 
     /**
