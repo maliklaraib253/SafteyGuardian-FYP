@@ -141,8 +141,11 @@ service cloud.firestore {
       // their own report's details (e.g. AI analysis), not its status.
       // Admins moderate (fake/spam flags, reassignment); police cannot
       // change moderation flags.
+      // A report an admin flagged as fake/spam is read-only for police until
+      // an admin clears the flag.
       allow update: if isAdmin()
-                    || (isPolice() && !touchesModerationFields())
+                    || (isPolice() && !touchesModerationFields()
+                        && resource.data.get('moderation', '') == '')
                     || (isOwner(resource.data.userId) && !isBlocked()
                         && !touchesPoliceFields() && !touchesModerationFields());
       allow delete: if isOwner(resource.data.userId) || isPolice() || isAdmin();

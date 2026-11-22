@@ -237,10 +237,10 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(
+                    Flexible(child: Text(
                       "Didn't receive email? ",
                       style: TextStyle(color: Colors.grey.shade600),
-                    ),
+                    )),
                     TextButton(
                       onPressed: _isResending ? null : _resendVerificationEmail,
                       child: _isResending

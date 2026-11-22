@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 
 import '../services/routing_service.dart';
 import '../widgets/evidence_image.dart';
+import '../widgets/evidence_video.dart';
 
 /// Lists the signed-in citizen's own incident reports with live status updates.
 class MyReportsScreen extends StatefulWidget {
@@ -300,9 +301,14 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
                     color: Colors.grey.shade600,
                   ),
                   const SizedBox(width: 4),
-                  Text(
-                    category,
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                  Flexible(
+                    child: Text(
+                      category,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
                   ),
                   const SizedBox(width: 12),
                   Icon(Icons.schedule, size: 14, color: Colors.grey.shade600),
@@ -363,9 +369,14 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
                     ),
                   ],
                   const Spacer(),
-                  Text(
-                    'ID ${id.substring(0, id.length < 6 ? id.length : 6).toUpperCase()}',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                  Flexible(
+                    child: Text(
+                      'ID ${id.substring(0, id.length < 6 ? id.length : 6).toUpperCase()}',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -509,6 +520,15 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
                 ),
               ),
             ],
+            if (EvidenceVideos.has(r)) ...[
+              const SizedBox(height: 16),
+              const Text(
+                'Videos',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              EvidenceVideos.forReport(r),
+            ],
             if (status == 'pending') ...[
               const SizedBox(height: 24),
               OutlinedButton.icon(
@@ -564,11 +584,13 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
                   color: Color(0xFF1D4ED8),
                 ),
                 SizedBox(width: 6),
-                Text(
-                  'Police updates',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF1E3A8A),
+                Flexible(
+                  child: Text(
+                    'Police updates',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF1E3A8A),
+                    ),
                   ),
                 ),
               ],

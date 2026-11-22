@@ -107,13 +107,13 @@ class _LoginScreenState extends State<LoginScreen> {
                   children: [
                     const AppLogoBadge(size: 52),
                     const SizedBox(width: 12),
-                    const Text(
+                    const Flexible(child: Text(
                       'Safety Guardian',
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w700,
                       ),
-                    ),
+                    )),
                   ],
                 ),
                 const SizedBox(height: 40),
@@ -224,10 +224,10 @@ class _LoginScreenState extends State<LoginScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Text(
+                          Flexible(child: Text(
                             "Don't have an account? ",
                             style: const TextStyle(color: AppColors.textMuted),
-                          ),
+                          )),
                           TextButton(
                             onPressed: () {
                               Navigator.pushNamed(context, '/signup');

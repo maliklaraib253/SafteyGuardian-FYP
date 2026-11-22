@@ -7,6 +7,7 @@ import '../../services/evidence_storage.dart';
 import '../../theme/app_theme.dart';
 import 'admin_widgets.dart';
 import '../../widgets/evidence_image.dart';
+import '../../widgets/evidence_video.dart';
 
 /// Report moderation: reassign cases, flag fake or spam reports, delete
 /// abusive content and (for anonymous reports, with a logged reason) look up
@@ -354,6 +355,9 @@ class _ReportDetailsState extends State<_ReportDetails> {
         'moderatedBy': _me,
         'moderatedAt': FieldValue.serverTimestamp(),
         'status': 'rejected',
+        // Off every officer's case list; police can't reassign it.
+        'assignedTo': FieldValue.delete(),
+        'assignedAt': FieldValue.delete(),
         'policeRemarks': 'Rejected by administrator: $reason',
         'remarksBy': 'Administrator',
         'remarksAt': FieldValue.serverTimestamp(),
@@ -381,11 +385,12 @@ class _ReportDetailsState extends State<_ReportDetails> {
   Future<void> _clearFlag() async {
     final ok = await adminConfirm(
       context,
-      title: 'Clear flag',
+      title: 'Clear flag and reopen',
       message:
-          'Remove the fake/spam flag? The status stays "Rejected" until a '
-          'police officer changes it.',
-      confirmLabel: 'Clear flag',
+          'This report is genuine? The fake/spam flag is removed and the '
+          'report goes back to police as "Pending", so officers can assign '
+          'and work on it again.',
+      confirmLabel: 'Clear flag and reopen',
     );
     if (!ok) return;
     try {
@@ -394,8 +399,25 @@ class _ReportDetailsState extends State<_ReportDetails> {
         'moderationReason': FieldValue.delete(),
         'moderatedBy': FieldValue.delete(),
         'moderatedAt': FieldValue.delete(),
+        'status': 'pending',
+        'policeRemarks': 'Reopened by administrator after review.',
+        'remarksBy': 'Administrator',
+        'remarksAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+        'statusHistory': FieldValue.arrayUnion([
+          {
+            'status': 'pending',
+            'remarks': 'Flag cleared by administrator; report reopened.',
+            'by': 'Administrator',
+            'at': Timestamp.now(),
+          },
+        ]),
       });
-      await AdminAccess.log('Cleared report flag', target: widget.id);
+      await AdminAccess.log(
+        'Cleared report flag and reopened',
+        target: widget.id,
+      );
+      if (mounted) adminToast(context, 'Flag cleared: report is pending again');
     } catch (e) {
       if (mounted) adminToast(context, adminErrorText(e), error: true);
     }
@@ -426,6 +448,7 @@ class _ReportDetailsState extends State<_ReportDetails> {
       // Remove the stored evidence pictures too.
       final pics = [
         if (r['images'] is List) ...(r['images'] as List).map((e) => '$e'),
+        ...EvidenceVideos.fromReport(r),
         if ((r['verificationSelfieUrl'] ?? '').toString().isNotEmpty)
           r['verificationSelfieUrl'].toString(),
         ?hiddenSelfie,
@@ -642,6 +665,15 @@ class _ReportDetailsState extends State<_ReportDetails> {
                 ),
               ),
             ],
+            if (EvidenceVideos.has(r)) ...[
+              const SizedBox(height: 12),
+              const Text(
+                'Video evidence',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 8),
+              EvidenceVideos.forReport(r),
+            ],
             if (history.isNotEmpty) ...[
               const SizedBox(height: 14),
               const Text(
@@ -678,11 +710,13 @@ class _ReportDetailsState extends State<_ReportDetails> {
               spacing: 8,
               runSpacing: 8,
               children: [
-                OutlinedButton.icon(
-                  onPressed: () => _reassign(r),
-                  icon: const Icon(Icons.swap_horiz, size: 18),
-                  label: const Text('Assign / reassign'),
-                ),
+                // Flagged reports can't be assigned until the flag is cleared.
+                if (flagged.isEmpty)
+                  OutlinedButton.icon(
+                    onPressed: () => _reassign(r),
+                    icon: const Icon(Icons.swap_horiz, size: 18),
+                    label: const Text('Assign / reassign'),
+                  ),
                 if (flagged.isEmpty) ...[
                   OutlinedButton.icon(
                     onPressed: () => _flag('fake'),
@@ -698,7 +732,7 @@ class _ReportDetailsState extends State<_ReportDetails> {
                   OutlinedButton.icon(
                     onPressed: _clearFlag,
                     icon: const Icon(Icons.outlined_flag, size: 18),
-                    label: const Text('Clear flag'),
+                    label: const Text('Clear flag and reopen'),
                   ),
                 if (anonymous && _revealed == null)
                   OutlinedButton.icon(

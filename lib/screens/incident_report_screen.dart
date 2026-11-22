@@ -34,6 +34,7 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import '../services/distress_monitor.dart';
 import '../theme/app_theme.dart';
 import '../theme/responsive.dart';
+import '../widgets/map_pin.dart';
 
 class IncidentReportScreen extends StatefulWidget {
   const IncidentReportScreen({super.key});
@@ -53,6 +54,10 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
   final List<XFile> _selectedImages = [];
+  // Videos, e.g. recorded with Evidence Capture (saved in the gallery).
+  final List<XFile> _selectedVideos = [];
+  static const int _maxVideos = 3;
+  bool _videoWarningAccepted = false;
   bool _isAnonymous = false;
   // Blur the reporter's OWN face in evidence photos (other people stay
   // visible as evidence). On by default, forced on for anonymous reports.
@@ -147,6 +152,14 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
   Future<bool> _confirmUploadPreview(List<OwnerBlurResult> results) async {
     final blurred = results.where((r) => r.ownerBlurred).length;
     final unchecked = results.where((r) => !r.checked).length;
+    // Why the online check failed (same reason for every photo, usually).
+    String? checkError;
+    for (final r in results) {
+      if (!r.checked && r.detail.isNotEmpty) {
+        checkError = r.detail;
+        break;
+      }
+    }
     final ok = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -168,13 +181,20 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
               if (unchecked > 0) ...[
                 const SizedBox(height: 6),
                 Text(
-                  '$unchecked photo${unchecked == 1 ? '' : 's'} could not be checked online (internet or AWS key problem). Check the text under the photo; it will be uploaded unchanged.',
+                  '$unchecked photo${unchecked == 1 ? '' : 's'} could not be checked online, so ${unchecked == 1 ? 'it' : 'they'} will be uploaded unchanged.',
                   style: TextStyle(fontSize: 12, color: Colors.orange.shade800),
                 ),
+                if (checkError != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'Reason: $checkError',
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+                  ),
+                ],
               ],
               const SizedBox(height: 12),
               SizedBox(
-                height: 150,
+                height: 186,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   itemCount: results.length,
@@ -222,7 +242,7 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
                         const SizedBox(height: 4),
                         Text(
                           results[i].detail,
-                          maxLines: 2,
+                          maxLines: 3,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontSize: 10,
@@ -556,8 +576,7 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
     if (signupSelfie == null) {
       await authService.saveReferenceSelfieIfMissing(
         user.uid,
-        verificationResult.processedSelfieFile ??
-            verificationResult.selfieFile,
+        verificationResult.processedSelfieFile ?? verificationResult.selfieFile,
       );
     }
 
@@ -612,54 +631,92 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
     try {
       double latitude;
       double longitude;
+      final typedAddress = _locationController.text.trim();
+      PlaceSuggestion? typedPlace;
+      if (_pickedLatitude == null && !_isPlaceholderAddress(typedAddress)) {
+        // The user typed an address: put the pin there, not on their GPS.
+        setState(() => _loadingMessage = 'Finding the address on the map...');
+        try {
+          // Prefer matches near the user (same street names exist in many
+          // cities).
+          final near = await Geolocator.getLastKnownPosition();
+          typedPlace = await RoutingService.geocodeQuery(
+            typedAddress,
+            nearLocation: near == null
+                ? null
+                : LatLng(near.latitude, near.longitude),
+          ).timeout(const Duration(seconds: 10));
+        } catch (_) {}
+        if (mounted) setState(() => _loadingMessage = 'Submitting report...');
+      }
       if (_pickedLatitude != null && _pickedLongitude != null) {
         latitude = _pickedLatitude!;
         longitude = _pickedLongitude!;
+      } else if (typedPlace != null) {
+        latitude = typedPlace.latitude;
+        longitude = typedPlace.longitude;
       } else {
-        final position = await Geolocator.getCurrentPosition(
-          locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.high,
-          ),
-        );
+        Position? position;
+        try {
+          position = await Geolocator.getCurrentPosition(
+            locationSettings: const LocationSettings(
+              accuracy: LocationAccuracy.high,
+              timeLimit: Duration(seconds: 15),
+            ),
+          );
+        } catch (_) {
+          // Only a recent last-known fix (under 2 minutes old) is accurate
+          // enough; an old one could be somewhere else entirely.
+          final last = await Geolocator.getLastKnownPosition();
+          if (last == null ||
+              DateTime.now().difference(last.timestamp).inMinutes >= 2) {
+            throw Exception(
+              "Couldn't get your location. Turn on GPS or use \"Pick on map\".",
+            );
+          }
+          position = last;
+        }
         latitude = position.latitude;
         longitude = position.longitude;
       }
 
-      List<String> imageUrls = [];
-      if (filesToUpload.isNotEmpty) {
-        for (final XFile toUpload in filesToUpload) {
-          final url = await EvidenceStorage.upload(toUpload, user.uid);
-          if (url != null) {
-            imageUrls.add(url);
-          }
-        }
-        final failed = filesToUpload.length - imageUrls.length;
-        if (failed > 0 && mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              backgroundColor: Colors.orange,
-              content: Text(
-                '$failed photo(s) could not be uploaded. Check the internet '
-                'connection; the report is still being sent.',
-              ),
-            ),
-          );
-        }
-      }
+      // Videos are uploaded after the report is saved (in the background),
+      // so the reporter doesn't wait for large files.
+      final pendingVideos = List<XFile>.from(_selectedVideos);
 
-      String? verificationSelfieUrl;
-      if (verificationResult.selfieFile != null) {
-        verificationSelfieUrl = await EvidenceStorage.upload(
-          XFile(verificationResult.selfieFile!.path),
-          user.uid,
-          folder: 'selfie',
+      // Photos, the verification selfie and the address all at once.
+      final photoUploads = Future.wait(
+        filesToUpload.map((f) => EvidenceStorage.upload(f, user.uid)),
+      );
+      final selfieUpload = verificationResult.selfieFile != null
+          ? EvidenceStorage.upload(
+              XFile(verificationResult.selfieFile!.path),
+              user.uid,
+              folder: 'selfie',
+            )
+          : Future<String?>.value(null);
+      final addressLookup = _finalAddress(latitude, longitude);
+
+      final imageUrls = (await photoUploads).whereType<String>().toList();
+      final String? verificationSelfieUrl = await selfieUpload;
+      final address = await addressLookup;
+
+      final failed = filesToUpload.length - imageUrls.length;
+      if (failed > 0 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.orange,
+            content: Text(
+              '$failed photo(s) could not be uploaded. Check the internet '
+              'connection; the report is still being sent.',
+            ),
+          ),
         );
       }
 
       final title = _titleController.text.trim();
       final description = _descriptionController.text.trim();
       final category = _selectedCategory ?? 'Other';
-      final address = await _finalAddress(latitude, longitude);
 
       // 1. Save original report to Firestore
       final reportDocRef = await FirebaseFirestore.instance
@@ -682,6 +739,8 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
             'reporterFaceBlurred': ownerBlurredCount > 0,
             'reporterFaceBlurredCount': ownerBlurredCount,
             'images': imageUrls,
+            'videos': <String>[],
+            if (pendingVideos.isNotEmpty) 'videosPending': pendingVideos.length,
             if (!_isAnonymous) 'verificationSelfieUrl': verificationSelfieUrl,
             'verified': true,
             'identityVerified': true,
@@ -710,47 +769,25 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
         }
       }
 
-      // 2. Perform semantic AI analysis via Gemini ReportAnalysisService
-      try {
-        final analysisService = ReportAnalysisService();
-        final analysis = await analysisService.analyzeReport(
+      // AI priority analysis and video uploads run in the background; the
+      // report is already saved, so the reporter can move on right away.
+      unawaited(
+        _analyzeReport(
+          reportDocRef,
           title: title,
           description: description,
           category: category,
-          location: address,
+          address: address,
+        ),
+      );
+      if (pendingVideos.isNotEmpty) {
+        unawaited(
+          EvidenceStorage.uploadReportVideos(
+            reportDocRef,
+            pendingVideos,
+            user.uid,
+          ),
         );
-
-        // 3. Save AI analysis fields into the SAME Firestore report document
-        await reportDocRef.update({
-          'priority': analysis.priority,
-          'severityScore': analysis.severityScore,
-          'reason': analysis.reason,
-          'detectedFactors': analysis.detectedFactors,
-          'immediateDanger': analysis.immediateDanger,
-          'violenceDetected': analysis.violenceDetected,
-          'weaponDetected': analysis.weaponDetected,
-          'injuryDetected': analysis.injuryDetected,
-          'threatDetected': analysis.threatDetected,
-          'analysisSource': 'gemini',
-          'priorityAnalyzedAt': FieldValue.serverTimestamp(),
-        });
-      } catch (aiError) {
-        debugPrint(
-          '[IncidentReportScreen] AI Analysis warning (non-fatal): $aiError',
-        );
-        // If AI analysis fails, the original report is safely preserved in Firestore
-        // Fall back to the on-device keyword classifier so the police
-        // dashboard still gets a meaningful priority. Police can re-run the
-        // AI analysis later from the dashboard.
-        try {
-          await reportDocRef.update(
-            PriorityClassifier.offlineAnalysisFields(
-              category: category,
-              title: title,
-              description: description,
-            )..['priorityAnalyzedAt'] = FieldValue.serverTimestamp(),
-          );
-        } catch (_) {}
       }
 
       await _clearDraft();
@@ -761,6 +798,7 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
       setState(() {
         _selectedCategory = null;
         _selectedImages.clear();
+        _selectedVideos.clear();
         _pickedLatitude = null;
         _pickedLongitude = null;
         _step = 0;
@@ -768,7 +806,10 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (_) => ReportSubmittedScreen(reportId: reportDocRef.id),
+          builder: (_) => ReportSubmittedScreen(
+            reportId: reportDocRef.id,
+            videosUploading: pendingVideos.length,
+          ),
         ),
       );
     } catch (e) {
@@ -801,6 +842,7 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
     'Assault',
   ];
   bool _showAllCategories = false;
+  bool _draftRestored = false;
   String? _categoryError;
   String? _titleError;
   String? _descriptionError;
@@ -1126,27 +1168,9 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
           _showAllCategories = true;
         }
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Your unfinished report was restored'),
-          action: SnackBarAction(
-            label: 'Start over',
-            onPressed: () {
-              _clearDraft();
-              setState(() {
-                _selectedCategory = null;
-                _titleController.clear();
-                _descriptionController.clear();
-                _locationController.clear();
-                _pickedLatitude = null;
-                _pickedLongitude = null;
-                _isAnonymous = false;
-                _step = 0;
-              });
-            },
-          ),
-        ),
-      );
+      // Shown as a small banner at the top of the form (a snackbar with a
+      // button stays on screen and covered the Continue button).
+      setState(() => _draftRestored = true);
     } catch (_) {}
   }
 
@@ -1162,6 +1186,7 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
     final content = Column(
       children: [
         if (!wide) _buildProgressBar(),
+        if (_draftRestored) _buildDraftBanner(),
         Expanded(
           child: SingleChildScrollView(
             padding: EdgeInsets.fromLTRB(pad, 16, pad, 24),
@@ -1220,6 +1245,52 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
             if (_isLoading) _buildLoadingOverlay(),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildDraftBanner() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
+      decoration: BoxDecoration(
+        color: AppColors.primarySoft,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.restore, size: 18, color: AppColors.primary),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              'Your unfinished report was restored',
+              style: TextStyle(fontSize: 13, color: AppColors.primaryDark),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              _clearDraft();
+              setState(() {
+                _selectedCategory = null;
+                _titleController.clear();
+                _descriptionController.clear();
+                _locationController.clear();
+                _pickedLatitude = null;
+                _pickedLongitude = null;
+                _isAnonymous = false;
+                _step = 0;
+                _draftRestored = false;
+              });
+            },
+            child: const Text('Start over'),
+          ),
+          IconButton(
+            tooltip: 'Dismiss',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.close, size: 18),
+            onPressed: () => setState(() => _draftRestored = false),
+          ),
+        ],
       ),
     );
   }
@@ -1350,7 +1421,9 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
       borderRadius: BorderRadius.circular(AppRadius.lg),
       border: Border.all(color: AppColors.border),
     ),
-    child: child,
+    // Own Material so ListTile / SwitchListTile ink shows above the card
+    // colour (avoids the "ink splashes may be invisible" assertion).
+    child: Material(type: MaterialType.transparency, child: child),
   );
 
   // ---- Step 1: What happened ----------------------------------------------
@@ -1593,25 +1666,16 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
                             onTap: (_, _) => _openMapPicker(),
                           ),
                           children: [
-                            TileLayer(
-                              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                              userAgentPackageName: 'pk.safetyguardian.app',
-                            ),
+                            appTileLayer(),
                             MarkerLayer(
                               markers: [
-                                Marker(
+                                pinMarker(
                                   point: LatLng(
                                     _pickedLatitude!,
                                     _pickedLongitude!,
                                   ),
-                                  width: 44,
-                                  height: 44,
-                                  alignment: Alignment.topCenter,
-                                  child: const Icon(
-                                    Icons.location_on,
-                                    color: AppColors.danger,
-                                    size: 40,
-                                  ),
+                                  color: AppColors.danger,
+                                  size: 40,
                                 ),
                               ],
                             ),
@@ -1659,9 +1723,13 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
                       key: const Key('report_location_field'),
                       controller: _locationController,
                       onChanged: (_) {
-                        if (_locationError != null) {
-                          setState(() => _locationError = null);
-                        }
+                        // Typed by hand: the old GPS/map pin no longer
+                        // matches, so the pin is found from the text on submit.
+                        setState(() {
+                          _locationError = null;
+                          _pickedLatitude = null;
+                          _pickedLongitude = null;
+                        });
                       },
                       decoration: InputDecoration(
                         hintText: 'Street, area or landmark',
@@ -1669,6 +1737,37 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
                         errorText: _locationError,
                       ),
                     ),
+                    if (!_locating &&
+                        !_isPlaceholderAddress(_locationController.text)) ...[
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Icon(
+                            _pickedLatitude != null
+                                ? Icons.check_circle
+                                : Icons.info_outline,
+                            size: 14,
+                            color: _pickedLatitude != null
+                                ? AppColors.success
+                                : AppColors.textMuted,
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              _pickedLatitude != null
+                                  ? 'Pin set: ${_pickedLatitude!.toStringAsFixed(5)}, '
+                                        '${_pickedLongitude!.toStringAsFixed(5)}'
+                                  : 'The pin will be found from this address. '
+                                        'For the exact spot use "Pick on map".',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: AppColors.textMuted,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                     const SizedBox(height: 10),
                     Row(
                       children: [
@@ -1678,7 +1777,10 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
                                 ? null
                                 : () => _autoLocate(force: true),
                             icon: const Icon(Iconsax.gps, size: 18),
-                            label: const Text('Use my location'),
+                            label: const FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text('Use my location', maxLines: 1),
+                            ),
                           ),
                         ),
                         const SizedBox(width: 10),
@@ -1686,7 +1788,10 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
                           child: OutlinedButton.icon(
                             onPressed: _openMapPicker,
                             icon: const Icon(Iconsax.map, size: 18),
-                            label: const Text('Pick on map'),
+                            label: const FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text('Pick on map', maxLines: 1),
+                            ),
                           ),
                         ),
                       ],
@@ -1739,15 +1844,121 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
     );
   }
 
+  /// Gemini priority analysis, with the on-device classifier as fallback.
+  static Future<void> _analyzeReport(
+    DocumentReference<Map<String, dynamic>> reportDocRef, {
+    required String title,
+    required String description,
+    required String category,
+    required String address,
+  }) async {
+    try {
+      final analysis = await ReportAnalysisService().analyzeReport(
+        title: title,
+        description: description,
+        category: category,
+        location: address,
+      );
+      await reportDocRef.update({
+        'priority': analysis.priority,
+        'severityScore': analysis.severityScore,
+        'reason': analysis.reason,
+        'detectedFactors': analysis.detectedFactors,
+        'immediateDanger': analysis.immediateDanger,
+        'violenceDetected': analysis.violenceDetected,
+        'weaponDetected': analysis.weaponDetected,
+        'injuryDetected': analysis.injuryDetected,
+        'threatDetected': analysis.threatDetected,
+        'analysisSource': 'gemini',
+        'priorityAnalyzedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (aiError) {
+      debugPrint('[IncidentReportScreen] AI analysis failed: $aiError');
+      // Keyword classifier so the police dashboard still gets a priority.
+      // Police can re-run the AI analysis later from the dashboard.
+      try {
+        await reportDocRef.update(
+          PriorityClassifier.offlineAnalysisFields(
+            category: category,
+            title: title,
+            description: description,
+          )..['priorityAnalyzedAt'] = FieldValue.serverTimestamp(),
+        );
+      } catch (_) {}
+    }
+  }
+
+  /// Faces in videos are not blurred: say so before the first video.
+  Future<bool> _confirmVideoWarning() async {
+    if (_videoWarningAccepted) return true;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.warning_amber_rounded, color: Colors.orange),
+        title: const Text('Faces in videos are not blurred'),
+        content: Text(
+          _isAnonymous
+              ? 'Videos are sent to police exactly as recorded. Your face or '
+                    'voice in the video can reveal who you are, even though '
+                    'this report is anonymous.'
+              : 'Videos are sent to police exactly as recorded. Your face and '
+                    "other people's faces will be visible. Only photos get "
+                    'face blur.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('I understand'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) _videoWarningAccepted = true;
+    return ok == true;
+  }
+
+  Future<void> _pickVideo([ImageSource source = ImageSource.gallery]) async {
+    if (!await _confirmVideoWarning() || !mounted) return;
+    try {
+      final video = await _picker.pickVideo(
+        source: source,
+        maxDuration: const Duration(minutes: 3),
+      );
+      if (video == null || !mounted) return;
+      final size = await video.length();
+      if (!mounted) return;
+      if (size > EvidenceStorage.maxVideoBytes) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'This video is ${(size / (1024 * 1024)).toStringAsFixed(0)} MB. '
+              'Please choose one under 100 MB.',
+            ),
+          ),
+        );
+        return;
+      }
+      setState(() => _selectedVideos.add(video));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Could not add the video: $e')));
+    }
+  }
+
   // ---- Step 3: Evidence ----------------------------------------------------
 
   Widget _buildEvidenceStep() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _label('Add photos'),
+        _label('Add photos and videos'),
         const Text(
-          'Optional, but photos help police act faster.',
+          'Optional, but evidence helps police act faster.',
           style: TextStyle(fontSize: 13, color: AppColors.textMuted),
         ),
         const SizedBox(height: 12),
@@ -1762,6 +1973,8 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
               children: [
                 for (var i = 0; i < _selectedImages.length; i++)
                   SizedBox(width: w, height: w, child: _photoTile(i)),
+                for (var i = 0; i < _selectedVideos.length; i++)
+                  SizedBox(width: w, height: w, child: _videoTile(i)),
                 SizedBox(
                   width: w,
                   height: w,
@@ -1770,7 +1983,7 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
                     borderRadius: BorderRadius.circular(12),
                     child: InkWell(
                       borderRadius: BorderRadius.circular(12),
-                      onTap: _showAddPhotoSheet,
+                      onTap: _showAddEvidenceSheet,
                       child: const Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
@@ -1800,7 +2013,10 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
               child: OutlinedButton.icon(
                 onPressed: _takePhoto,
                 icon: const Icon(Iconsax.camera, size: 18),
-                label: const Text('Camera'),
+                label: const FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text('Camera'),
+                ),
               ),
             ),
             const SizedBox(width: 10),
@@ -1808,11 +2024,41 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
               child: OutlinedButton.icon(
                 onPressed: _pickImages,
                 icon: const Icon(Iconsax.gallery, size: 18),
-                label: const Text('Gallery'),
+                label: const FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text('Gallery'),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _canAddVideo ? _showAddVideoSheet : null,
+                icon: const Icon(Iconsax.video, size: 18),
+                label: const FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text('Video'),
+                ),
               ),
             ),
           ],
         ),
+        if (_selectedVideos.isNotEmpty || !EvidenceStorage.canUploadVideos) ...[
+          const SizedBox(height: 8),
+          Text(
+            EvidenceStorage.canUploadVideos
+                ? '⚠ Faces in videos are NOT blurred. Up to $_maxVideos '
+                      'videos, 100 MB each.'
+                : 'Video upload is not set up in this build yet.',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: EvidenceStorage.canUploadVideos
+                  ? Colors.orange.shade800
+                  : AppColors.textMuted,
+            ),
+          ),
+        ],
         const SizedBox(height: 24),
         _label('Privacy'),
         _card(
@@ -1909,7 +2155,58 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
     );
   }
 
-  void _showAddPhotoSheet() {
+  bool get _canAddVideo =>
+      EvidenceStorage.canUploadVideos && _selectedVideos.length < _maxVideos;
+
+  Widget _videoTile(int i) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E293B),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          padding: const EdgeInsets.all(6),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.play_circle_fill, color: Colors.white, size: 34),
+              const SizedBox(height: 4),
+              Text(
+                'Video ${i + 1}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Positioned(
+          top: 4,
+          right: 4,
+          child: Material(
+            color: Colors.black54,
+            shape: const CircleBorder(),
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: () => setState(() => _selectedVideos.removeAt(i)),
+              child: const Padding(
+                padding: EdgeInsets.all(4),
+                child: Icon(Icons.close, size: 16, color: Colors.white),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _showAddEvidenceSheet() {
     showModalBottomSheet<void>(
       context: context,
       builder: (ctx) => SafeArea(
@@ -1926,10 +2223,59 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
             ),
             ListTile(
               leading: const Icon(Iconsax.gallery),
-              title: const Text('Choose from gallery'),
+              title: const Text('Choose photos'),
               onTap: () {
                 Navigator.pop(ctx);
                 _pickImages();
+              },
+            ),
+            ListTile(
+              enabled: _canAddVideo,
+              leading: const Icon(Iconsax.video),
+              title: const Text('Record a video'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickVideo(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              enabled: _canAddVideo,
+              leading: const Icon(Icons.video_library_outlined),
+              title: const Text('Choose a video'),
+              subtitle: const Text('e.g. one recorded in Evidence Capture'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickVideo(ImageSource.gallery);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showAddVideoSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Iconsax.video),
+              title: const Text('Record a video'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickVideo(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.video_library_outlined),
+              title: const Text('Choose from gallery'),
+              subtitle: const Text('e.g. one recorded in Evidence Capture'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickVideo(ImageSource.gallery);
               },
             ),
           ],
@@ -1942,6 +2288,7 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
 
   Widget _buildReviewStep() {
     final photos = _selectedImages.length;
+    final videos = _selectedVideos.length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1979,9 +2326,14 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
               _reviewRow(
                 Iconsax.gallery,
                 'Evidence',
-                photos == 0
-                    ? 'No photos'
-                    : '$photos photo${photos == 1 ? '' : 's'}',
+                (photos == 0 && videos == 0)
+                    ? 'No photos or videos'
+                    : [
+                        if (photos > 0)
+                          '$photos photo${photos == 1 ? '' : 's'}',
+                        if (videos > 0)
+                          '$videos video${videos == 1 ? '' : 's'}',
+                      ].join(', '),
                 2,
               ),
               _reviewRow(
@@ -2161,7 +2513,12 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
 /// Shown after a report is submitted.
 class ReportSubmittedScreen extends StatelessWidget {
   final String reportId;
-  const ReportSubmittedScreen({super.key, required this.reportId});
+  final int videosUploading;
+  const ReportSubmittedScreen({
+    super.key,
+    required this.reportId,
+    this.videosUploading = 0,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2173,83 +2530,129 @@ class ReportSubmittedScreen extends StatelessWidget {
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 480),
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                children: [
-                  const Spacer(),
-                  Container(
-                    width: 88,
-                    height: 88,
-                    decoration: const BoxDecoration(
-                      color: AppColors.successSoft,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Iconsax.tick_circle,
-                      size: 44,
-                      color: AppColors.success,
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  const Text(
-                    'Report submitted',
-                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Reference #$ref',
-                    style: const TextStyle(color: AppColors.textMuted),
-                  ),
-                  const SizedBox(height: 24),
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: AppColors.surface,
-                      borderRadius: BorderRadius.circular(AppRadius.lg),
-                      border: Border.all(color: AppColors.border),
-                    ),
-                    child: const Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'What happens next',
-                          style: TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        SizedBox(height: 10),
-                        _NextLine(
-                          Iconsax.flash_1,
-                          'Police review new reports, most urgent first.',
-                        ),
-                        _NextLine(
-                          Iconsax.notification,
-                          'Status updates appear in My reports.',
-                        ),
-                        _NextLine(
-                          Iconsax.danger,
-                          'In danger right now? Use SOS from the home screen.',
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Spacer(),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 54,
-                    child: FilledButton(
-                      onPressed: () => Navigator.pushReplacementNamed(
-                        context,
-                        '/my-reports',
+            child: FillScroll(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  children: [
+                    const Spacer(),
+                    Container(
+                      width: 88,
+                      height: 88,
+                      decoration: const BoxDecoration(
+                        color: AppColors.successSoft,
+                        shape: BoxShape.circle,
                       ),
-                      child: const Text('Track in My reports'),
+                      child: const Icon(
+                        Iconsax.tick_circle,
+                        size: 44,
+                        color: AppColors.success,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Back to home'),
-                  ),
-                ],
+                    const SizedBox(height: 20),
+                    const Text(
+                      'Report submitted',
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Reference #$ref',
+                      style: const TextStyle(color: AppColors.textMuted),
+                    ),
+                    if (videosUploading > 0) ...[
+                      const SizedBox(height: 16),
+                      ValueListenableBuilder<String?>(
+                        valueListenable: EvidenceStorage.videoStatus,
+                        builder: (_, status, _) => Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: AppColors.primarySoft,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            children: [
+                              if (status != null && !status.startsWith('✓'))
+                                const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              else
+                                const Icon(
+                                  Iconsax.video,
+                                  size: 18,
+                                  color: AppColors.primary,
+                                ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  status ??
+                                      'Videos are uploading in the background. '
+                                          'Keep the app open until done.',
+                                  style: const TextStyle(fontSize: 13),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 24),
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(AppRadius.lg),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: const Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'What happens next',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          SizedBox(height: 10),
+                          _NextLine(
+                            Iconsax.flash_1,
+                            'Police review new reports, most urgent first.',
+                          ),
+                          _NextLine(
+                            Iconsax.notification,
+                            'Status updates appear in My reports.',
+                          ),
+                          _NextLine(
+                            Iconsax.danger,
+                            'In danger right now? Use SOS from the home screen.',
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Spacer(),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 54,
+                      child: FilledButton(
+                        onPressed: () => Navigator.pushReplacementNamed(
+                          context,
+                          '/my-reports',
+                        ),
+                        child: const Text('Track in My reports'),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Back to home'),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

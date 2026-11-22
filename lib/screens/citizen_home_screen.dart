@@ -184,7 +184,8 @@ class _HomeBody extends StatelessWidget {
 
     final sosCard = _SosCard(
       onTap: () => onOpen('/sos'),
-      onHeld: () => onOpen('/sos', arguments: 'activate'),
+      // Opens SOS with the 5-second cancel countdown already running.
+      onHeld: () => onOpen('/sos', arguments: 'countdown'),
     );
     final activity = _ActivityCard(user: user, onOpen: onOpen);
 
@@ -814,14 +815,14 @@ class _ActivityCard extends StatelessWidget {
                   const Row(
                     children: [
                       Expanded(child: _SectionTitle('Recent report')),
-                      Text(
+                      Flexible(child: Text(
                         'See all',
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
                           color: AppColors.primary,
                         ),
-                      ),
+                      )),
                     ],
                   ),
                   const SizedBox(height: 12),

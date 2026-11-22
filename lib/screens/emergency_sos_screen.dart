@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:iconsax/iconsax.dart';
 
 import 'dart:async';
@@ -43,6 +44,11 @@ class _EmergencySOSScreenState extends State<EmergencySOSScreen>
   Timer? _ticker;
   Duration _elapsed = Duration.zero;
   bool _autoStartChecked = false;
+  // Seconds left before a tapped SOS is sent (null = no countdown). Gives
+  // the user a chance to cancel an accidental tap.
+  int? _countdown;
+  Timer? _countdownTimer;
+  static const int _countdownSeconds = 5;
   // Contacts for UI display (empty by default for new accounts)
   List<Map<String, dynamic>> _trustedContacts = [];
   String _emergencyStatus = 'Ready';
@@ -69,11 +75,18 @@ class _EmergencySOSScreenState extends State<EmergencySOSScreen>
     // 'activate' so the alert starts straight away.
     if (_autoStartChecked) return;
     _autoStartChecked = true;
-    if (ModalRoute.of(context)?.settings.arguments == 'activate') {
+    final arg = ModalRoute.of(context)?.settings.arguments;
+    if (arg == 'activate') {
+      // Distress countdown already expired: start at once.
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted || _isEmergencyActive) return;
         await _refreshContactsFromService();
         if (mounted && !_isEmergencyActive) _activateEmergency();
+      });
+    } else if (arg == 'countdown') {
+      // Held on the home screen: give 5 seconds to cancel a mistake.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_isEmergencyActive) _startCountdown();
       });
     }
   }
@@ -101,8 +114,133 @@ class _EmergencySOSScreenState extends State<EmergencySOSScreen>
   void dispose() {
     _pulseAnimation.dispose();
     _ticker?.cancel();
+    _countdownTimer?.cancel();
     _callHandlerService.stopListening();
     super.dispose();
+  }
+
+  /// Tapping the SOS button starts a short countdown; nothing is sent
+  /// until it reaches zero, so an accidental tap can be cancelled.
+  void _startCountdown() {
+    if (_isEmergencyActive || _countdown != null) return;
+    HapticFeedback.heavyImpact();
+    setState(() => _countdown = _countdownSeconds);
+    _countdownTimer?.cancel();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      final left = (_countdown ?? 1) - 1;
+      if (left <= 0) {
+        t.cancel();
+        setState(() => _countdown = null);
+        _activateEmergency();
+      } else {
+        HapticFeedback.selectionClick();
+        setState(() => _countdown = left);
+      }
+    });
+  }
+
+  void _cancelCountdown() {
+    _countdownTimer?.cancel();
+    if (!mounted) return;
+    setState(() => _countdown = null);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('SOS cancelled. Nothing was sent to your contacts.'),
+      ),
+    );
+  }
+
+  void _sendNow() {
+    _countdownTimer?.cancel();
+    setState(() => _countdown = null);
+    _activateEmergency();
+  }
+
+  Widget _buildCountdownOverlay() {
+    final n = _countdown ?? 0;
+    return Positioned.fill(
+      child: Material(
+        color: AppColors.danger.withValues(alpha: 0.96),
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(28),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.sos, color: Colors.white, size: 48),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Sending SOS in',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white, fontSize: 18),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      width: 120,
+                      height: 120,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 4),
+                      ),
+                      child: Text(
+                        '$n',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 56,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Your trusted contacts will be texted and called with '
+                      'your location. Tapped by mistake? Cancel now.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white, height: 1.4),
+                    ),
+                    const SizedBox(height: 28),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 58,
+                      child: FilledButton(
+                        key: const Key('sos_cancel_countdown'),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: AppColors.danger,
+                          textStyle: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        onPressed: _cancelCountdown,
+                        child: const Text('Cancel'),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextButton(
+                      key: const Key('sos_send_now'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: _sendNow,
+                      child: const Text('Send now'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   // Activate emergency mode
@@ -469,16 +607,25 @@ class _EmergencySOSScreenState extends State<EmergencySOSScreen>
     final pad = Responsive.pagePadding(context);
 
     return PopScope(
-      canPop: !active,
+      // Back always works. During the countdown it cancels the SOS; while
+      // SOS is active the user can leave this screen and SOS keeps running
+      // in the background (the red bar on the home screen brings them back).
+      canPop: _countdown == null,
       onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              "SOS is still active. Tap \"I'm safe now\" to stop it before leaving.",
+        if (!didPop) {
+          // Back during the countdown = cancel it.
+          if (_countdown != null) _cancelCountdown();
+          return;
+        }
+        if (active) {
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+            const SnackBar(
+              content: Text(
+                "SOS is still running. Open it again and tap \"I'm safe\" to stop it.",
+              ),
             ),
-          ),
-        );
+          );
+        }
       },
       child: Scaffold(
         backgroundColor: active ? AppColors.dangerTint : AppColors.background,
@@ -578,6 +725,7 @@ class _EmergencySOSScreenState extends State<EmergencySOSScreen>
                   ),
                 ),
               ),
+            if (_countdown != null) _buildCountdownOverlay(),
           ],
         ),
       ),
@@ -684,7 +832,7 @@ class _EmergencySOSScreenState extends State<EmergencySOSScreen>
           label: 'Activate SOS',
           child: GestureDetector(
             key: const Key('sos_activate_button'),
-            onTap: _activateEmergency,
+            onTap: _startCountdown,
             child: SizedBox(
               width: 200,
               height: 200,
@@ -891,7 +1039,7 @@ class _EmergencySOSScreenState extends State<EmergencySOSScreen>
                     ),
                   ),
                 ),
-                Text(
+                Flexible(child: Text(
                   _callingIndex == -1
                       ? (_cascadeDone ? 'Dialer opened' : 'Opening dialer…')
                       : (_reachedIndex != null ? 'Not needed' : 'Last'),
@@ -902,7 +1050,7 @@ class _EmergencySOSScreenState extends State<EmergencySOSScreen>
                         ? AppColors.danger
                         : AppColors.textSubtle,
                   ),
-                ),
+                )),
               ],
             ),
           ],
@@ -979,14 +1127,14 @@ class _EmergencySOSScreenState extends State<EmergencySOSScreen>
             ],
           ),
         ),
-        Text(
+        Flexible(child: Text(
           status,
           style: TextStyle(
             fontSize: 12.5,
             fontWeight: FontWeight.w600,
             color: statusColor,
           ),
-        ),
+        )),
       ],
     );
   }

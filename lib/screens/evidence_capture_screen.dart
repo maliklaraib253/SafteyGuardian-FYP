@@ -488,10 +488,10 @@ class _EvidenceCaptureScreenState extends State<EvidenceCaptureScreen>
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
+                const Flexible(child: Text(
                   'Saved Evidence',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
+                )),
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 10,

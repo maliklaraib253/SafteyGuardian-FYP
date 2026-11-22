@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
+
 import '../services/routing_service.dart';
+import '../widgets/map_pin.dart';
 
 class LocationPickerResult {
   final double latitude;
@@ -53,7 +55,9 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
     if (widget.initialPosition != null) return;
     try {
       final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
       ).timeout(const Duration(seconds: 5));
       final here = LatLng(pos.latitude, pos.longitude);
       if (!mounted) return;
@@ -123,9 +127,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title),
-      ),
+      appBar: AppBar(title: Text(widget.title)),
       body: Stack(
         children: [
           FlutterMap(
@@ -138,24 +140,11 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
             children: [
               // OpenStreetMap tiles. OSM blocks apps that identify as
               // 'com.example...', so a real app id is sent instead.
-              TileLayer(
-                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'pk.safetyguardian.app',
-                maxNativeZoom: 19,
-              ),
+              appTileLayer(),
               if (_picked != null)
                 MarkerLayer(
                   markers: [
-                    Marker(
-                      point: _picked!,
-                      width: 40,
-                      height: 40,
-                      child: const Icon(
-                        Icons.location_on,
-                        color: Colors.red,
-                        size: 40,
-                      ),
-                    ),
+                    pinMarker(point: _picked!, color: Colors.red, size: 44),
                   ],
                 ),
             ],
@@ -179,7 +168,9 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                               style: TextStyle(fontStyle: FontStyle.italic),
                             )
                           : Text(
-                              _address.isEmpty ? 'Tap the map to pick a place' : _address,
+                              _address.isEmpty
+                                  ? 'Tap the map to pick a place'
+                                  : _address,
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -197,7 +188,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               color: Colors.white70,
               child: const Text(
-                '© OpenStreetMap contributors',
+                mapAttribution,
                 style: TextStyle(fontSize: 10, color: Colors.black87),
               ),
             ),

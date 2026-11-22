@@ -257,12 +257,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       color: Colors.white,
                     ),
                     const SizedBox(width: 4),
-                    Text(
+                    Flexible(child: Text(
                       _identityVerified
                           ? 'Identity verified'
                           : 'Identity not verified',
                       style: const TextStyle(color: Colors.white, fontSize: 12),
-                    ),
+                    )),
                     if (_createdAt != null) ...[
                       const Text(
                         '  •  ',
@@ -303,13 +303,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
               children: [
                 Icon(icon, color: _primary),
                 const SizedBox(width: 8),
-                Text(
+                Flexible(child: Text(
                   title,
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
                   ),
-                ),
+                )),
               ],
             ),
             const SizedBox(height: 14),

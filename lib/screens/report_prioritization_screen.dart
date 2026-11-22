@@ -211,7 +211,7 @@ class _ReportPrioritizationScreenState extends State<ReportPrioritizationScreen>
           children: [
             Icon(Iconsax.cpu, color: const Color(0xFF1D4ED8)),
             const SizedBox(width: 8),
-            const Text('AI Priority Analysis'),
+            const Flexible(child: Text('AI Priority Analysis')),
           ],
         ),
         content: Column(
@@ -363,21 +363,21 @@ class _ReportPrioritizationScreenState extends State<ReportPrioritizationScreen>
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
+          Flexible(child: Text(
             label,
             style: TextStyle(
               fontSize: 13,
               color: Colors.grey.shade600,
             ),
-          ),
-          Text(
+          )),
+          Flexible(child: Text(
             value,
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.bold,
               color: color,
             ),
-          ),
+          )),
         ],
       ),
     );
@@ -615,13 +615,13 @@ class _ReportPrioritizationScreenState extends State<ReportPrioritizationScreen>
                                     color: Colors.grey.shade500,
                                   ),
                                   const SizedBox(width: 4),
-                                  Text(
+                                  Flexible(child: Text(
                                     report['time'],
                                     style: TextStyle(
                                       fontSize: 11,
                                       color: Colors.grey.shade600,
                                     ),
-                                  ),
+                                  )),
                                 ],
                               ),
                               Container(
@@ -808,7 +808,7 @@ class _ReportPrioritizationScreenState extends State<ReportPrioritizationScreen>
           crossAxisCount: 2,
           crossAxisSpacing: 10,
           mainAxisSpacing: 10,
-          childAspectRatio: 1.2,
+          childAspectRatio: 1.0,
           children: [
             _buildStatCard(
               'Total Reports',
@@ -964,20 +964,20 @@ class _ReportPrioritizationScreenState extends State<ReportPrioritizationScreen>
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
+            Flexible(child: Text(
               label,
               style: TextStyle(
                 fontWeight: FontWeight.w600,
                 color: color,
               ),
-            ),
-            Text(
+            )),
+            Flexible(child: Text(
               '$count reports (${(percentage * 100).toStringAsFixed(1)}%)',
               style: TextStyle(
                 fontSize: 12,
                 color: Colors.grey.shade600,
               ),
-            ),
+            )),
           ],
         ),
         const SizedBox(height: 6),
@@ -1147,17 +1147,17 @@ class _ReportPrioritizationScreenState extends State<ReportPrioritizationScreen>
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
+            Flexible(child: Text(
               label,
               style: const TextStyle(fontSize: 13),
-            ),
-            Text(
+            )),
+            Flexible(child: Text(
               time,
               style: TextStyle(
                 fontWeight: FontWeight.bold,
                 color: color,
               ),
-            ),
+            )),
           ],
         ),
         const SizedBox(height: 4),

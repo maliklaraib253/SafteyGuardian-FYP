@@ -590,14 +590,14 @@ class _DistressDetectionScreenState extends State<DistressDetectionScreen>
                                       color: Colors.blue.shade700,
                                     ),
                                     const SizedBox(width: 8),
-                                    Text(
+                                    Flexible(child: Text(
                                       'Live Mic Listening (Urdu / English)',
                                       style: TextStyle(
                                         fontSize: 12,
                                         fontWeight: FontWeight.bold,
                                         color: Colors.blue.shade900,
                                       ),
-                                    ),
+                                    )),
                                   ],
                                 ),
                                 const SizedBox(height: 6),

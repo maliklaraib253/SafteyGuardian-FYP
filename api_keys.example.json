@@ -1,7 +1,9 @@
 {
-  "GEMINI_API_KEY": "YOUR_GEMINI_API_KEY",
-  "AWS_ACCESS_KEY_ID": "YOUR_AWS_ACCESS_KEY_ID",
-  "AWS_SECRET_ACCESS_KEY": "YOUR_AWS_SECRET_ACCESS_KEY",
-  "AWS_REGION": "YOUR_AWS_REGION",
-  "IMGBB_API_KEY": "YOUR_IMGBB_API_KEY"
+  "GEMINI_API_KEY": "your-gemini-key",
+  "AWS_ACCESS_KEY_ID": "your-aws-access-key-id",
+  "AWS_SECRET_ACCESS_KEY": "your-aws-secret-access-key",
+  "AWS_REGION": "us-east-1",
+  "IMGBB_API_KEY": "your-imgbb-key",
+  "CLOUDINARY_CLOUD_NAME": "your-cloud-name",
+  "CLOUDINARY_UPLOAD_PRESET": "your-unsigned-upload-preset"
 }

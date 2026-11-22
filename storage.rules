@@ -29,6 +29,11 @@ service firebase.storage {
         && request.resource.contentType.matches('image/.*');
     }
 
+    function isVideoUnder100MB() {
+      return request.resource.size < 100 * 1024 * 1024
+        && request.resource.contentType.matches('video/.*');
+    }
+
     // Biometric and CNIC identity pictures: only the owner.
     match /users/{userId}/identity/{allPaths=**} {
       allow read, write: if isOwner(userId);
@@ -41,7 +46,7 @@ service firebase.storage {
     match /reports/{userId}/{allPaths=**} {
       allow get: if isOwner(userId) || isPolice() || isAdmin();
       allow list: if false;
-      allow create: if isOwner(userId) && isImageUnder10MB();
+      allow create: if isOwner(userId) && (isImageUnder10MB() || isVideoUnder100MB());
       allow update: if false;
       allow delete: if isOwner(userId) || isAdmin();
     }

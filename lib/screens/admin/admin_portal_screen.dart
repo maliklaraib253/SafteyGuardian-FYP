@@ -157,13 +157,13 @@ class _AdminPortalScreenState extends State<AdminPortalScreen> {
                       children: [
                         AppLogoBadge(size: 36),
                         SizedBox(width: 12),
-                        Text(
+                        Flexible(child: Text(
                           'Admin Portal',
                           style: TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.w700,
                           ),
-                        ),
+                        )),
                       ],
                     ),
                   ),
@@ -535,10 +535,10 @@ class _AdminOverviewPageState extends State<AdminOverviewPage> {
                   Row(
                     children: [
                       Expanded(child: Text(e.key)),
-                      Text(
+                      Flexible(child: Text(
                         '${e.value}',
                         style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
+                      )),
                     ],
                   ),
                   const SizedBox(height: 4),

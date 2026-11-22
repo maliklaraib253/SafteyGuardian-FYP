@@ -899,10 +899,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(
+              Flexible(child: Text(
                 "Already have an account? ",
                 style: TextStyle(color: Colors.grey.shade600),
-              ),
+              )),
               TextButton(
                 onPressed: () => Navigator.pop(context),
                 child: const Text(
@@ -1119,7 +1119,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     borderRadius: BorderRadius.circular(16),
                   ),
                 ),
-                child: const Text('Next: Live Selfie Verification'),
+                child: const FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text('Next: Live Selfie Verification', maxLines: 1),
+                ),
               ),
             ),
           ],

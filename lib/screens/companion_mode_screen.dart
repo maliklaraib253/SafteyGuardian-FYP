@@ -1,18 +1,23 @@
 import 'dart:async';
 import 'dart:math' as math;
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+
 import '../services/distress_monitor.dart';
+
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:iconsax/iconsax.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:permission_handler/permission_handler.dart';
+
 import '../services/routing_service.dart';
 import '../services/sos_service.dart';
 import 'location_picker_screen.dart';
+import '../widgets/map_pin.dart';
 
 class CompanionModeScreen extends StatefulWidget {
   const CompanionModeScreen({super.key});
@@ -24,8 +29,10 @@ class CompanionModeScreen extends StatefulWidget {
 class _CompanionModeScreenState extends State<CompanionModeScreen> {
   // ─── CONFIGURABLE CONSTANTS ───────────────────────────────────────────────
   static const double deviationThresholdMeters = 40.0; // Allowed road buffer
-  static const double minGpsAccuracyMeters = 60.0; // Allow practical outdoor GPS fixes
-  static const int deviationPersistenceCount = 2; // Fast: 2 consecutive off-route fixes
+  static const double minGpsAccuracyMeters =
+      60.0; // Allow practical outdoor GPS fixes
+  static const int deviationPersistenceCount =
+      2; // Fast: 2 consecutive off-route fixes
   static const double arrivalRadiusMeters = 50.0; // Arrival radius
   static const Duration deviationAlertCooldown = Duration(minutes: 3);
 
@@ -118,7 +125,10 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
     try {
-      final doc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
       if (doc.exists && doc.data() != null) {
         final data = doc.data()!;
         final name = data['name']?.toString() ?? data['fullName']?.toString();
@@ -151,7 +161,10 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
         if (mounted) {
-          _showSnackBar('Location permission is required for Companion Mode', Colors.red);
+          _showSnackBar(
+            'Location permission is required for Companion Mode',
+            Colors.red,
+          );
         }
         return;
       }
@@ -195,7 +208,9 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
     // 2. Fetch fresh high-accuracy GPS position
     try {
       final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
       ).timeout(const Duration(seconds: 10));
 
       final userLatLng = LatLng(pos.latitude, pos.longitude);
@@ -213,24 +228,28 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
 
       // Pre-start location listener to keep start location live until trip starts
       _preStartSubscription?.cancel();
-      _preStartSubscription = Geolocator.getPositionStream(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          distanceFilter: 5,
-        ),
-      ).listen((p) {
-        if (!mounted || _isActive) return;
-        final liveLoc = LatLng(p.latitude, p.longitude);
-        setState(() {
-          _lastPosition = p;
-          _startLocation = liveLoc;
-          _currentLocation = liveLoc;
-        });
-      });
+      _preStartSubscription =
+          Geolocator.getPositionStream(
+            locationSettings: const LocationSettings(
+              accuracy: LocationAccuracy.high,
+              distanceFilter: 5,
+            ),
+          ).listen((p) {
+            if (!mounted || _isActive) return;
+            final liveLoc = LatLng(p.latitude, p.longitude);
+            setState(() {
+              _lastPosition = p;
+              _startLocation = liveLoc;
+              _currentLocation = liveLoc;
+            });
+          });
     } catch (e) {
       debugPrint('Error getting start location: $e');
       if (mounted && _startLocation == null) {
-        _showSnackBar('Could not fetch GPS location. Please check your signal.', Colors.orange);
+        _showSnackBar(
+          'Could not fetch GPS location. Please check your signal.',
+          Colors.orange,
+        );
       }
     }
   }
@@ -245,7 +264,8 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _startAddress = 'Location (${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)})';
+        _startAddress =
+            'Location (${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)})';
       });
     }
   }
@@ -265,7 +285,10 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
       double minDistance = 120.0; // 120 meters tap tolerance
 
       for (int i = 0; i < _availableRoutes.length; i++) {
-        final dist = RoutingService.distanceToPolyline(point, _availableRoutes[i].points);
+        final dist = RoutingService.distanceToPolyline(
+          point,
+          _availableRoutes[i].points,
+        );
         if (dist < minDistance) {
           minDistance = dist;
           bestIndex = i;
@@ -296,7 +319,8 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
       }
     } catch (_) {
       if (mounted) {
-        final fallback = 'Location (${point.latitude.toStringAsFixed(4)}, ${point.longitude.toStringAsFixed(4)})';
+        final fallback =
+            'Location (${point.latitude.toStringAsFixed(4)}, ${point.longitude.toStringAsFixed(4)})';
         setState(() {
           _destinationAddress = fallback;
           _searchController.text = fallback;
@@ -441,7 +465,11 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
       for (final r in _availableRoutes) {
         allPoints.addAll(r.points);
       }
-      _fitRouteCamera(start, dest, allPoints.isNotEmpty ? allPoints : _routePoints);
+      _fitRouteCamera(
+        start,
+        dest,
+        allPoints.isNotEmpty ? allPoints : _routePoints,
+      );
     }
   }
 
@@ -461,8 +489,10 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       try {
         final bounds = LatLngBounds.fromPoints([start, dest, ...points]);
-        if ((bounds.northEast.latitude - bounds.southWest.latitude).abs() < 0.0001 &&
-            (bounds.northEast.longitude - bounds.southWest.longitude).abs() < 0.0001) {
+        if ((bounds.northEast.latitude - bounds.southWest.latitude).abs() <
+                0.0001 &&
+            (bounds.northEast.longitude - bounds.southWest.longitude).abs() <
+                0.0001) {
           _mapController.move(start, 16);
         } else {
           _mapController.fitCamera(
@@ -481,7 +511,8 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
   }
 
   Future<void> _recalculateRoute() async {
-    final start = _currentLocation ??
+    final start =
+        _currentLocation ??
         (_lastPosition != null
             ? LatLng(_lastPosition!.latitude, _lastPosition!.longitude)
             : _startLocation);
@@ -489,7 +520,10 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
     if (start == null || dest == null) return;
 
     if (mounted) {
-      _showSnackBar('Recalculating route from current location…', const Color(0xFF1D4ED8));
+      _showSnackBar(
+        'Recalculating route from current location…',
+        const Color(0xFF1D4ED8),
+      );
     }
     setState(() => _isCalculatingRoute = true);
 
@@ -515,7 +549,10 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
         _fitRouteCamera(start, dest, _routePoints);
       }
     } else {
-      _showSnackBar('Could not recalculate route. Please check connection.', Colors.red);
+      _showSnackBar(
+        'Could not recalculate route. Please check connection.',
+        Colors.red,
+      );
     }
   }
 
@@ -554,13 +591,19 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
 
   Future<void> _startCompanionMode() async {
     if (_destination == null || _routePoints.isEmpty) {
-      _showSnackBar('Please search or select a destination first', Colors.orange);
+      _showSnackBar(
+        'Please search or select a destination first',
+        Colors.orange,
+      );
       return;
     }
 
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      _showSnackBar('You must be logged in to start Companion Mode', Colors.red);
+      _showSnackBar(
+        'You must be logged in to start Companion Mode',
+        Colors.red,
+      );
       return;
     }
 
@@ -582,7 +625,10 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
     final permission = await Geolocator.requestPermission();
     if (permission == LocationPermission.denied ||
         permission == LocationPermission.deniedForever) {
-      _showSnackBar('Location permission required for trip tracking', Colors.red);
+      _showSnackBar(
+        'Location permission required for trip tracking',
+        Colors.red,
+      );
       return;
     }
 
@@ -640,7 +686,10 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
       (_) => _pushLiveLocationToFirestore(),
     );
 
-    _showSnackBar('Companion Mode Started! Trusted contacts notified.', Colors.green);
+    _showSnackBar(
+      'Companion Mode Started! Trusted contacts notified.',
+      Colors.green,
+    );
   }
 
   void _handleLocationUpdate(Position pos) {
@@ -651,7 +700,11 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
     // Calculate heading/bearing for directional arrow navigation
     double heading = pos.heading;
     if (heading == 0.0 && _currentLocation != null) {
-      final distMoved = const Distance().as(LengthUnit.Meter, _currentLocation!, newLatLng);
+      final distMoved = const Distance().as(
+        LengthUnit.Meter,
+        _currentLocation!,
+        newLatLng,
+      );
       if (distMoved > 2.0) {
         heading = Geolocator.bearingBetween(
           _currentLocation!.latitude,
@@ -685,7 +738,9 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
 
       final estSeconds = remainingMeters / (pos.speed > 1.5 ? pos.speed : 8.33);
       final mins = (estSeconds / 60).round();
-      final durationText = mins < 60 ? '$mins mins' : '${mins ~/ 60}h ${mins % 60}m';
+      final durationText = mins < 60
+          ? '$mins mins'
+          : '${mins ~/ 60}h ${mins % 60}m';
 
       setState(() {
         _remainingDistanceMeters = remainingMeters;
@@ -724,13 +779,17 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
 
     // Ignore reading if GPS accuracy is too poor to prevent false alarms
     if (pos.accuracy > minGpsAccuracyMeters) {
-      debugPrint('Skipping deviation check: GPS accuracy ${pos.accuracy}m > $minGpsAccuracyMeters');
+      debugPrint(
+        'Skipping deviation check: GPS accuracy ${pos.accuracy}m > $minGpsAccuracyMeters',
+      );
       return;
     }
 
     // Filter stationary GPS drift (e.g. stopped at traffic light or indoors)
     if (pos.speed < 0.3 && _consecutiveDeviationCount == 0) {
-      debugPrint('Skipping deviation check: stationary drift (${pos.speed.toStringAsFixed(2)} m/s)');
+      debugPrint(
+        'Skipping deviation check: stationary drift (${pos.speed.toStringAsFixed(2)} m/s)',
+      );
       return;
     }
 
@@ -739,15 +798,20 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
       _routePoints,
     );
 
-    debugPrint('Distance to planned route: ${distanceToRoute.toStringAsFixed(1)} m');
+    debugPrint(
+      'Distance to planned route: ${distanceToRoute.toStringAsFixed(1)} m',
+    );
 
     if (distanceToRoute > deviationThresholdMeters) {
       _consecutiveDeviationCount++;
-      debugPrint('Consecutive deviations: $_consecutiveDeviationCount / $deviationPersistenceCount');
+      debugPrint(
+        'Consecutive deviations: $_consecutiveDeviationCount / $deviationPersistenceCount',
+      );
 
       if (_consecutiveDeviationCount >= deviationPersistenceCount) {
         final now = DateTime.now();
-        final inCooldown = _lastDeviationAlertTime != null &&
+        final inCooldown =
+            _lastDeviationAlertTime != null &&
             now.difference(_lastDeviationAlertTime!) < deviationAlertCooldown;
 
         if (!_isDeviationActive || !inCooldown) {
@@ -827,20 +891,36 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text("I'm Safe", style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+            child: const Text(
+              "I'm Safe",
+              style: TextStyle(
+                color: Colors.green,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ),
           TextButton.icon(
             onPressed: () {
               Navigator.pop(ctx);
               _recalculateRoute();
             },
-            icon: const Icon(Icons.alt_route, color: Color(0xFF1D4ED8), size: 18),
-            label: const Text('Reroute', style: TextStyle(color: Color(0xFF1D4ED8), fontWeight: FontWeight.bold)),
+            icon: const Icon(
+              Icons.alt_route,
+              color: Color(0xFF1D4ED8),
+              size: 18,
+            ),
+            label: const Text(
+              'Reroute',
+              style: TextStyle(
+                color: Color(0xFF1D4ED8),
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ),
           ElevatedButton.icon(
             onPressed: () {
               Navigator.pop(ctx);
-              Navigator.pushNamed(context, '/sos', arguments: 'activate');
+              Navigator.pushNamed(context, '/sos', arguments: 'countdown');
             },
             icon: const Icon(Icons.emergency, size: 18),
             label: const Text('Emergency SOS'),
@@ -856,12 +936,16 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
 
   // ─── 7. INITIAL JOURNEY START SMS ──────────────────────────────────────────
   Future<void> _sendJourneyStartSms() async {
-    final start = _currentLocation ??
+    final start =
+        _currentLocation ??
         _startLocation ??
-        (_lastPosition != null ? LatLng(_lastPosition!.latitude, _lastPosition!.longitude) : null);
+        (_lastPosition != null
+            ? LatLng(_lastPosition!.latitude, _lastPosition!.longitude)
+            : null);
     final String locationPart;
     if (start != null) {
-      locationPart = 'Live location: https://maps.google.com/?q=${start.latitude.toStringAsFixed(5)},${start.longitude.toStringAsFixed(5)}';
+      locationPart =
+          'Live location: https://maps.google.com/?q=${start.latitude.toStringAsFixed(5)},${start.longitude.toStringAsFixed(5)}';
     } else {
       locationPart = 'Trip in progress.';
     }
@@ -879,7 +963,8 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
     final totalDistance = _routeInfo?.formattedDistance ?? '';
 
     // 1. Notify trusted contacts of safe arrival with final location link
-    final endLoc = _currentLocation ??
+    final endLoc =
+        _currentLocation ??
         (_lastPosition != null
             ? LatLng(_lastPosition!.latitude, _lastPosition!.longitude)
             : _destination);
@@ -904,12 +989,14 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
         context: context,
         barrierDismissible: false,
         builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
           title: const Row(
             children: [
               Icon(Icons.check_circle, color: Colors.green, size: 30),
               SizedBox(width: 10),
-              Text('You Have Arrived!'),
+              Flexible(child: Text('You Have Arrived!')),
             ],
           ),
           content: Column(
@@ -934,8 +1021,24 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text('Trip Duration:', style: TextStyle(fontSize: 13, color: Colors.black54)),
-                          Text(tripDuration, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                          const Flexible(
+                            child: Text(
+                              'Trip Duration:',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.black54,
+                              ),
+                            ),
+                          ),
+                          Flexible(
+                            child: Text(
+                              tripDuration,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
                         ],
                       ),
                     if (totalDistance.isNotEmpty) ...[
@@ -943,8 +1046,24 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text('Distance:', style: TextStyle(fontSize: 13, color: Colors.black54)),
-                          Text(totalDistance, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                          const Flexible(
+                            child: Text(
+                              'Distance:',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.black54,
+                              ),
+                            ),
+                          ),
+                          Flexible(
+                            child: Text(
+                              totalDistance,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
                         ],
                       ),
                     ],
@@ -952,8 +1071,25 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                     const Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text('SMS Status:', style: TextStyle(fontSize: 13, color: Colors.black54)),
-                        Text('Arrival SMS Sent', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.green)),
+                        Flexible(
+                          child: Text(
+                            'SMS Status:',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.black54,
+                            ),
+                          ),
+                        ),
+                        Flexible(
+                          child: Text(
+                            'Arrival SMS Sent',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.green,
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ],
@@ -1040,7 +1176,9 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
         return;
       }
 
-      debugPrint('📨 Dispatching trip SMS to ALL ${validContacts.length} trusted contact(s)...');
+      debugPrint(
+        '📨 Dispatching trip SMS to ALL ${validContacts.length} trusted contact(s)...',
+      );
       int sentCount = 0;
       for (final contact in validContacts) {
         final phone = contact['phone']!;
@@ -1049,7 +1187,9 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
           final sent = await _sosService.sendSms(cleanPhone, message);
           if (!sent) throw Exception('not sent');
           sentCount++;
-          debugPrint('✅ Sent trip SMS ($sentCount/${validContacts.length}) to ${contact['name']} ($cleanPhone)');
+          debugPrint(
+            '✅ Sent trip SMS ($sentCount/${validContacts.length}) to ${contact['name']} ($cleanPhone)',
+          );
         } catch (e) {
           debugPrint('❌ Failed to send SMS to $cleanPhone: $e');
         }
@@ -1062,7 +1202,10 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
       }
 
       if (sentCount > 0 && mounted) {
-        _showSnackBar('Sent trip SMS to all $sentCount contact(s)', Colors.green);
+        _showSnackBar(
+          'Sent trip SMS to all $sentCount contact(s)',
+          Colors.green,
+        );
       }
     } catch (e) {
       debugPrint('Error sending SMS to trusted contacts: $e');
@@ -1225,7 +1368,8 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
     if (!completed) {
       _showSnackBar('Companion Mode Stopped', Colors.orange);
       try {
-        LatLng? endLoc = _currentLocation ??
+        LatLng? endLoc =
+            _currentLocation ??
             (_lastPosition != null
                 ? LatLng(_lastPosition!.latitude, _lastPosition!.longitude)
                 : _startLocation);
@@ -1259,9 +1403,14 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text('GPS Service Disabled'),
-        content: const Text('Please enable location services on your device to use Companion Mode.'),
+        content: const Text(
+          'Please enable location services on your device to use Companion Mode.',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
           ElevatedButton(
             onPressed: () {
               Navigator.pop(ctx);
@@ -1280,9 +1429,14 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text('Location Permission Needed'),
-        content: const Text('Location permission is permanently denied. Please allow location in App Settings.'),
+        content: const Text(
+          'Location permission is permanently denied. Please allow location in App Settings.',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
           ElevatedButton(
             onPressed: () {
               Navigator.pop(ctx);
@@ -1297,9 +1451,8 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
 
   void _showSnackBar(String message, Color color) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: color),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message), backgroundColor: color));
   }
 
   // ─── MAP LAYERS ────────────────────────────────────────────────────────────
@@ -1322,9 +1475,13 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                     height: 40,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: _isDeviationActive ? Colors.red : const Color(0xFF1D4ED8),
+                      color: _isDeviationActive
+                          ? Colors.red
+                          : const Color(0xFF1D4ED8),
                       border: Border.all(color: Colors.white, width: 2.5),
-                      boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 5)],
+                      boxShadow: const [
+                        BoxShadow(color: Colors.black38, blurRadius: 5),
+                      ],
                     ),
                     child: const Icon(
                       Icons.navigation,
@@ -1341,8 +1498,11 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                       height: 40,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: (_isDeviationActive ? Colors.red : const Color(0xFF1D4ED8))
-                            .withValues(alpha: 0.25),
+                        color:
+                            (_isDeviationActive
+                                    ? Colors.red
+                                    : const Color(0xFF1D4ED8))
+                                .withValues(alpha: 0.25),
                       ),
                     ),
                     Container(
@@ -1350,9 +1510,13 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                       height: 20,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: _isDeviationActive ? Colors.red : const Color(0xFF1D4ED8),
+                        color: _isDeviationActive
+                            ? Colors.red
+                            : const Color(0xFF1D4ED8),
                         border: Border.all(color: Colors.white, width: 3),
-                        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+                        boxShadow: const [
+                          BoxShadow(color: Colors.black26, blurRadius: 4),
+                        ],
                       ),
                     ),
                   ],
@@ -1362,7 +1526,9 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
     }
 
     // 2. Start location marker (if not tracking yet)
-    if (!_isActive && _startLocation != null && _startLocation != _currentLocation) {
+    if (!_isActive &&
+        _startLocation != null &&
+        _startLocation != _currentLocation) {
       markers.add(
         Marker(
           point: _startLocation!,
@@ -1375,14 +1541,7 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
 
     // 3. Destination marker
     if (_destination != null) {
-      markers.add(
-        Marker(
-          point: _destination!,
-          width: 44,
-          height: 44,
-          child: const Icon(Icons.location_on, color: Colors.red, size: 42),
-        ),
-      );
+      markers.add(pinMarker(point: _destination!, color: Colors.red, size: 42));
     }
 
     return markers;
@@ -1423,8 +1582,11 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
       polylines.add(
         Polyline(
           points: _routePoints,
-          color: (_isDeviationActive ? Colors.red.shade900 : const Color(0xFF1D4ED8))
-              .withValues(alpha: 0.5),
+          color:
+              (_isDeviationActive
+                      ? Colors.red.shade900
+                      : const Color(0xFF1D4ED8))
+                  .withValues(alpha: 0.5),
           strokeWidth: 8,
         ),
       );
@@ -1464,8 +1626,11 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
               IconButton(
                 tooltip: 'Emergency SOS',
                 icon: const Icon(Icons.emergency, color: Colors.white),
-                onPressed: () =>
-                    Navigator.pushNamed(context, '/sos', arguments: 'activate'),
+                onPressed: () => Navigator.pushNamed(
+                  context,
+                  '/sos',
+                  arguments: 'countdown',
+                ),
               ),
           ],
         ),
@@ -1487,11 +1652,7 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
               children: [
                 // OpenStreetMap tiles. OSM blocks apps that identify as
                 // 'com.example...', so a real app id is sent instead.
-                TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'pk.safetyguardian.app',
-                  maxNativeZoom: 19,
-                ),
+                appTileLayer(),
                 PolylineLayer(polylines: _buildPolylines()),
                 MarkerLayer(markers: _buildMarkers()),
               ],
@@ -1512,7 +1673,11 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                     _mapController.move(target, 16);
                   }
                 },
-                child: Icon(_autoFollowUser ? Icons.my_location : Icons.location_searching),
+                child: Icon(
+                  _autoFollowUser
+                      ? Icons.my_location
+                      : Icons.location_searching,
+                ),
               ),
             ),
 
@@ -1570,7 +1735,11 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                     color: Colors.green.shade50,
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(Icons.trip_origin, color: Colors.green.shade600, size: 18),
+                  child: Icon(
+                    Icons.trip_origin,
+                    color: Colors.green.shade600,
+                    size: 18,
+                  ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -1579,18 +1748,23 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                     children: [
                       Row(
                         children: [
-                          Text(
-                            'Start Location',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey.shade600,
-                              letterSpacing: 0.5,
+                          Flexible(
+                            child: Text(
+                              'Start Location',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.grey.shade600,
+                                letterSpacing: 0.5,
+                              ),
                             ),
                           ),
                           const SizedBox(width: 6),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 1,
+                            ),
                             decoration: BoxDecoration(
                               color: Colors.green.shade100,
                               borderRadius: BorderRadius.circular(6),
@@ -1623,7 +1797,11 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                 if (!_isActive)
                   IconButton(
                     tooltip: 'Refresh Current Location',
-                    icon: const Icon(Icons.refresh, size: 18, color: Color(0xFF1D4ED8)),
+                    icon: const Icon(
+                      Icons.refresh,
+                      size: 18,
+                      color: Color(0xFF1D4ED8),
+                    ),
                     onPressed: _initStartLocation,
                   ),
               ],
@@ -1634,13 +1812,11 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
               padding: const EdgeInsets.only(left: 13, top: 3, bottom: 3),
               child: Row(
                 children: [
-                  Container(
-                    width: 2,
-                    height: 14,
-                    color: Colors.grey.shade300,
-                  ),
+                  Container(width: 2, height: 14, color: Colors.grey.shade300),
                   const SizedBox(width: 14),
-                  Expanded(child: Divider(height: 1, color: Colors.grey.shade200)),
+                  Expanded(
+                    child: Divider(height: 1, color: Colors.grey.shade200),
+                  ),
                 ],
               ),
             ),
@@ -1655,7 +1831,11 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                     color: Colors.red.shade50,
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.location_on, color: Colors.red, size: 18),
+                  child: const Icon(
+                    Icons.location_on,
+                    color: Colors.red,
+                    size: 18,
+                  ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -1666,10 +1846,16 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                     textInputAction: TextInputAction.search,
                     onSubmitted: _handleSearchSubmit,
                     onChanged: _onSearchChanged,
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
                     decoration: InputDecoration(
                       hintText: 'Enter destination or place name…',
-                      hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 13),
+                      hintStyle: TextStyle(
+                        color: Colors.grey.shade400,
+                        fontSize: 13,
+                      ),
                       border: InputBorder.none,
                       isDense: true,
                       contentPadding: const EdgeInsets.symmetric(vertical: 8),
@@ -1705,7 +1891,11 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                 if (!_isActive)
                   IconButton(
                     tooltip: 'Pick on Map',
-                    icon: const Icon(Iconsax.map, color: Color(0xFF1D4ED8), size: 20),
+                    icon: const Icon(
+                      Iconsax.map,
+                      color: Color(0xFF1D4ED8),
+                      size: 20,
+                    ),
                     onPressed: _pickDestinationOnMap,
                   ),
               ],
@@ -1724,21 +1914,36 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
-        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, 4))],
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 10,
+            offset: Offset(0, 4),
+          ),
+        ],
       ),
       child: ListView.separated(
         shrinkWrap: true,
         padding: const EdgeInsets.symmetric(vertical: 6),
         itemCount: _suggestions.length,
-        separatorBuilder: (context, index) => Divider(height: 1, color: Colors.grey.shade200),
+        separatorBuilder: (context, index) =>
+            Divider(height: 1, color: Colors.grey.shade200),
         itemBuilder: (context, index) {
           final s = _suggestions[index];
-          final distStr = s.formattedDistanceFrom(_currentLocation ?? _startLocation);
+          final distStr = s.formattedDistanceFrom(
+            _currentLocation ?? _startLocation,
+          );
 
           return ListTile(
             dense: true,
-            leading: const Icon(Icons.location_on_outlined, color: Color(0xFF1D4ED8)),
-            title: Text(s.title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+            leading: const Icon(
+              Icons.location_on_outlined,
+              color: Color(0xFF1D4ED8),
+            ),
+            title: Text(
+              s.title,
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+            ),
             subtitle: s.subtitle.isNotEmpty
                 ? Text(
                     s.subtitle,
@@ -1749,7 +1954,10 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                 : null,
             trailing: distStr.isNotEmpty
                 ? Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.blue.shade50,
                       borderRadius: BorderRadius.circular(8),
@@ -1789,20 +1997,32 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
             const Expanded(
               child: Text(
                 'ROUTE DEVIATION DETECTED!',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
               ),
             ),
             TextButton(
               style: TextButton.styleFrom(
                 backgroundColor: Colors.white,
                 foregroundColor: Colors.red.shade700,
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
               onPressed: _recalculateRoute,
-              child: const Text('Reroute', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+              child: const Text(
+                'Reroute',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11),
+              ),
             ),
           ],
         ),
@@ -1826,7 +2046,11 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
               'Trip Monitoring Active • Destination: $_destinationAddress',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+              ),
             ),
           ),
         ],
@@ -1841,7 +2065,13 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
       decoration: const BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 15, offset: Offset(0, -3))],
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 15,
+            offset: Offset(0, -3),
+          ),
+        ],
       ),
       child: SafeArea(
         top: false,
@@ -1869,9 +2099,13 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                      SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
                       SizedBox(width: 12),
-                      Text('Calculating optimal road route…'),
+                      Flexible(child: Text('Calculating optimal road route…')),
                     ],
                   ),
                 ),
@@ -1886,7 +2120,11 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                 ),
                 child: Row(
                   children: [
-                    const Icon(Iconsax.info_circle, color: Color(0xFF1D4ED8), size: 22),
+                    const Icon(
+                      Iconsax.info_circle,
+                      color: Color(0xFF1D4ED8),
+                      size: 22,
+                    ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Column(
@@ -1894,11 +2132,17 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                         children: [
                           const Text(
                             'Enter Destination Above',
-                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
                           ),
                           Text(
                             'Start location is auto-detected. Type an end destination or pick on map.',
-                            style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+                            style: TextStyle(
+                              color: Colors.grey.shade700,
+                              fontSize: 12,
+                            ),
                           ),
                         ],
                       ),
@@ -1912,11 +2156,16 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                   Expanded(
                     child: OutlinedButton.icon(
                       icon: const Icon(Iconsax.map, size: 18),
-                      label: const Text('Pick on Map'),
+                      label: const FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text('Pick on Map', maxLines: 1),
+                      ),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: const Color(0xFF1D4ED8),
                         side: const BorderSide(color: Color(0xFF1D4ED8)),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
                         padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
                       onPressed: _pickDestinationOnMap,
@@ -1926,11 +2175,16 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                   Expanded(
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.search, size: 18),
-                      label: const Text('Search & Route'),
+                      label: const FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text('Search & Route', maxLines: 1),
+                      ),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF1D4ED8),
                         foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
                         padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
                       onPressed: () {
@@ -1938,7 +2192,10 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                           _handleSearchSubmit(_searchController.text);
                         } else {
                           _searchFocusNode.requestFocus();
-                          _showSnackBar('Please type a destination name above', Colors.blue);
+                          _showSnackBar(
+                            'Please type a destination name above',
+                            Colors.blue,
+                          );
                         }
                       },
                     ),
@@ -1956,12 +2213,18 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Destination', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                        const Text(
+                          'Destination',
+                          style: TextStyle(fontSize: 11, color: Colors.grey),
+                        ),
                         Text(
                           _destinationAddress,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                          ),
                         ),
                       ],
                     ),
@@ -1972,15 +2235,21 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                 const SizedBox(height: 12),
                 Row(
                   children: [
-                    const Icon(Icons.alt_route, size: 16, color: Color(0xFF1D4ED8)),
+                    const Icon(
+                      Icons.alt_route,
+                      size: 16,
+                      color: Color(0xFF1D4ED8),
+                    ),
                     const SizedBox(width: 6),
-                    Text(
-                      'AVAILABLE ROUTES (${_availableRoutes.length})',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF1D4ED8),
-                        letterSpacing: 0.5,
+                    Flexible(
+                      child: Text(
+                        'AVAILABLE ROUTES (${_availableRoutes.length})',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF1D4ED8),
+                          letterSpacing: 0.5,
+                        ),
                       ),
                     ),
                   ],
@@ -1995,7 +2264,9 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                       final r = _availableRoutes[i];
                       final isSelected = i == _selectedRouteIndex;
                       final isFastest = i == 0;
-                      final title = isFastest ? 'Route 1 (Fastest)' : 'Route ${i + 1}';
+                      final title = isFastest
+                          ? 'Route 1 (Fastest)'
+                          : 'Route ${i + 1}';
                       final subText = r.summary.isNotEmpty
                           ? '${r.formattedDuration} • via ${r.summary}'
                           : '${r.formattedDuration} • ${r.formattedDistance}';
@@ -2007,10 +2278,14 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                           borderRadius: BorderRadius.circular(14),
                           child: AnimatedContainer(
                             duration: const Duration(milliseconds: 200),
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 8,
+                            ),
                             decoration: BoxDecoration(
                               color: isSelected
-                                  ? const Color(0xFF1D4ED8).withValues(alpha: 0.1)
+                                  ? const Color(0xFF1D4ED8)
+                                        .withValues(alpha: 0.1)
                                   : Colors.grey.shade50,
                               borderRadius: BorderRadius.circular(14),
                               border: Border.all(
@@ -2028,17 +2303,25 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Icon(
-                                      isSelected ? Icons.check_circle : Icons.circle_outlined,
+                                      isSelected
+                                          ? Icons.check_circle
+                                          : Icons.circle_outlined,
                                       size: 14,
-                                      color: isSelected ? const Color(0xFF1D4ED8) : Colors.grey,
+                                      color: isSelected
+                                          ? const Color(0xFF1D4ED8)
+                                          : Colors.grey,
                                     ),
                                     const SizedBox(width: 5),
                                     Text(
                                       title,
                                       style: TextStyle(
                                         fontSize: 12,
-                                        fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
-                                        color: isSelected ? const Color(0xFF1D4ED8) : Colors.black87,
+                                        fontWeight: isSelected
+                                            ? FontWeight.bold
+                                            : FontWeight.w600,
+                                        color: isSelected
+                                            ? const Color(0xFF1D4ED8)
+                                            : Colors.black87,
                                       ),
                                     ),
                                   ],
@@ -2048,8 +2331,12 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                                   subText,
                                   style: TextStyle(
                                     fontSize: 11,
-                                    color: isSelected ? const Color(0xFF1D4ED8) : Colors.grey.shade600,
-                                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                                    color: isSelected
+                                        ? const Color(0xFF1D4ED8)
+                                        : Colors.grey.shade600,
+                                    fontWeight: isSelected
+                                        ? FontWeight.w600
+                                        : FontWeight.normal,
                                   ),
                                 ),
                               ],
@@ -2071,8 +2358,8 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                     'Distance',
                     _isActive
                         ? (_remainingDistanceMeters < 1000
-                            ? '${_remainingDistanceMeters.toStringAsFixed(0)} m'
-                            : '${(_remainingDistanceMeters / 1000).toStringAsFixed(1)} km')
+                              ? '${_remainingDistanceMeters.toStringAsFixed(0)} m'
+                              : '${(_remainingDistanceMeters / 1000).toStringAsFixed(1)} km')
                         : (_routeInfo?.formattedDistance ?? '—'),
                     Iconsax.routing,
                   ),
@@ -2085,7 +2372,9 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                   ),
                   _buildMetricTile(
                     'Status',
-                    _isActive ? (_isDeviationActive ? 'Off Route' : 'Safe') : 'Ready',
+                    _isActive
+                        ? (_isDeviationActive ? 'Off Route' : 'Safe')
+                        : 'Ready',
                     Iconsax.shield_tick,
                     color: _isActive
                         ? (_isDeviationActive ? Colors.red : Colors.green)
@@ -2104,12 +2393,17 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                     icon: const Icon(Iconsax.radar_2),
                     label: const Text(
                       'Start Companion Mode',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF1D4ED8),
                       foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
                       elevation: 4,
                     ),
                     onPressed: _startCompanionMode,
@@ -2124,12 +2418,17 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                       icon: const Icon(Icons.alt_route, size: 18),
                       label: const Text(
                         'Recalculate Route from Current Location',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
                       ),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.amber.shade800,
                         foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
                         padding: const EdgeInsets.symmetric(vertical: 11),
                       ),
                     ),
@@ -2142,14 +2441,22 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                       child: SizedBox(
                         height: 50,
                         child: OutlinedButton.icon(
-                          icon: const Icon(Icons.flag_outlined, color: Colors.green),
+                          icon: const Icon(
+                            Icons.flag_outlined,
+                            color: Colors.green,
+                          ),
                           label: const Text(
                             "I've Arrived",
-                            style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
+                            style: TextStyle(
+                              color: Colors.green,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                           style: OutlinedButton.styleFrom(
                             side: const BorderSide(color: Colors.green),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
                           ),
                           onPressed: () => _handleArrivalDetected(),
                         ),
@@ -2168,7 +2475,9 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.red,
                             foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
                           ),
                           onPressed: () => _stopCompanionMode(),
                         ),
@@ -2184,7 +2493,12 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
     );
   }
 
-  Widget _buildMetricTile(String label, String value, IconData icon, {Color? color}) {
+  Widget _buildMetricTile(
+    String label,
+    String value,
+    IconData icon, {
+    Color? color,
+  }) {
     final themeColor = color ?? const Color(0xFF1D4ED8);
     return Column(
       children: [
@@ -2193,13 +2507,20 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
           children: [
             Icon(icon, size: 14, color: Colors.grey.shade600),
             const SizedBox(width: 4),
-            Text(label, style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+            Text(
+              label,
+              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+            ),
           ],
         ),
         const SizedBox(height: 4),
         Text(
           value,
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: themeColor),
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 16,
+            color: themeColor,
+          ),
         ),
       ],
     );
@@ -2210,11 +2531,19 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Trip Active'),
-        content: const Text('Companion Mode is currently monitoring your trip. Are you sure you want to stop tracking and exit?'),
+        content: const Text(
+          'Companion Mode is currently monitoring your trip. Are you sure you want to stop tracking and exit?',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Stay')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Stay'),
+          ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
             onPressed: () {
               Navigator.pop(ctx);
               _stopCompanionMode();

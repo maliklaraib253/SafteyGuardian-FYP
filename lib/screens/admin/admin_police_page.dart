@@ -329,10 +329,10 @@ class _AdminPolicePageState extends State<AdminPolicePage> {
       children: [
         Icon(icon, size: 18, color: AppColors.primary),
         const SizedBox(width: 8),
-        Text(
+        Flexible(child: Text(
           text,
           style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-        ),
+        )),
       ],
     ),
   );

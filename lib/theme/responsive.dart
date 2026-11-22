@@ -76,7 +76,7 @@ class ResponsiveAppShell extends StatelessWidget {
     final clamped = media.copyWith(
       textScaler: media.textScaler.clamp(
         minScaleFactor: 0.85,
-        maxScaleFactor: 1.3,
+        maxScaleFactor: 1.15,
       ),
     );
 
@@ -115,6 +115,26 @@ class ResponsiveAppShell extends StatelessWidget {
               ),
             );
           },
+        ),
+      ),
+    );
+  }
+}
+
+/// Lets a full-screen layout that uses Spacer/Expanded fill the screen on
+/// tall phones, but scroll instead of overflowing on short phones or with
+/// large system fonts.
+class FillScroll extends StatelessWidget {
+  final Widget child;
+  const FillScroll({super.key, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, c) => SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: c.maxHeight),
+          child: IntrinsicHeight(child: child),
         ),
       ),
     );

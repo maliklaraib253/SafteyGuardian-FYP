@@ -136,6 +136,12 @@ class AwsRekognitionService {
     required List<int> targetBytes,
     double similarityThreshold = 65.0,
   }) async {
+    if (accessKey.isEmpty || secretKey.isEmpty) {
+      return AwsCompareResult.failure(
+        'AWS keys missing: start the app with '
+        '--dart-define-from-file=api_keys.json',
+      );
+    }
     try {
       // Optimize image size to ensure snappy upload (< 1.5MB per image)
       final optimizedSource = _optimizeImageBytes(sourceBytes);

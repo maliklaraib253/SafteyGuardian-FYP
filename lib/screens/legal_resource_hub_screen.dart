@@ -248,7 +248,7 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
       'title': 'Escape a wrist grab',
       'level': 'Beginner',
       'icon': Iconsax.arrow_swap_horizontal,
-      'videoId': 'gJ_Vq6P8ccc',
+      'videoId': '8zgxa0m0zvw',
       'steps': [
         "Don't pull straight back: find the gap between their thumb and fingers.",
         'Turn your wrist towards their thumb.',
@@ -260,7 +260,7 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
       'title': 'Defense against a choke',
       'level': 'Intermediate',
       'icon': Iconsax.shield_cross,
-      'videoId': '-yFzyCDzC4I',
+      'videoId': '61V67wZ-QdI',
       'steps': [
         'Tuck your chin down to protect your throat.',
         'Raise one arm straight up and turn your body sharply to that side.',
@@ -272,7 +272,7 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
       'title': 'Using everyday objects',
       'level': 'Beginner',
       'icon': Iconsax.key,
-      'videoId': 'YEIeDXxMPNE',
+      'videoId': 'fApmPP0R5eU',
       'steps': [
         'Keep keys, a pen or a phone in your hand when walking alone.',
         'Hold keys firmly in a fist, one key sticking out from the side.',
@@ -284,7 +284,7 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
       'title': 'Getting up from the ground',
       'level': 'Advanced',
       'icon': Iconsax.arrow_up_3,
-      'videoId': 'nJ-uKYcdvDg',
+      'videoId': 'Thp7ipnjyTI',
       'steps': [
         'Stay on your back, knees bent, feet towards the attacker.',
         'Kick at their knees or shins if they come close.',
@@ -296,7 +296,7 @@ class _LegalResourceHubScreenState extends State<LegalResourceHubScreen>
       'title': 'Escape a bear hug',
       'level': 'Intermediate',
       'icon': Iconsax.user_remove,
-      'videoId': 'E3PWY6xX1tQ',
+      'videoId': 'mMP1SEpmho8',
       'steps': [
         'Drop your weight by bending your knees so you are harder to lift.',
         'Stamp on their foot or kick back at their shin.',
@@ -1423,10 +1423,10 @@ Rules:
             child: CircularProgressIndicator(strokeWidth: 2),
           ),
           SizedBox(width: 8),
-          Text(
+          Flexible(child: Text(
             'Thinking…',
             style: TextStyle(color: AppColors.textMuted, fontSize: 13),
-          ),
+          )),
         ],
       ),
     );

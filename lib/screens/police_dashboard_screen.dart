@@ -8,11 +8,12 @@ import '../theme/app_theme.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/routing_service.dart';
 import '../widgets/evidence_image.dart';
 import 'police_profile_screen.dart';
+import '../widgets/evidence_video.dart';
+import '../widgets/map_pin.dart';
 
 class PoliceDashboardScreen extends StatefulWidget {
   const PoliceDashboardScreen({super.key});
@@ -388,10 +389,21 @@ class _CC {
         return const Color(0xFFF97316);
       case 'MEDIUM':
         return const Color(0xFFEAB308);
+      case 'LOW':
+        return const Color(0xFF16A34A);
       default:
-        return const Color(0xFF94A3B8);
+        return const Color(0xFF64748B);
     }
   }
+
+  /// Short label shown on a map pin.
+  static String pinLabel(String display) => switch (display) {
+    'CRITICAL' => 'Critical',
+    'HIGH' => 'High',
+    'MEDIUM' => 'Medium',
+    'LOW' => 'Low',
+    _ => 'New',
+  };
 
   (Color, Color) status(String s) {
     switch (s) {
@@ -418,6 +430,7 @@ class _CC {
 class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
   final TextEditingController _searchController = TextEditingController();
   final MapController _mapController = MapController();
+  String? _lastPinKey;
   String _searchQuery = '';
   String _selectedStatus = 'all';
   String _selectedPriority = 'all';
@@ -425,38 +438,27 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
   String _selectedDateRange = 'all';
   bool _dangerOnly = false;
   bool _mineOnly = false;
+  // Reports an administrator flagged as fake/spam live in their own archive.
+  bool _showFlagged = false;
+
+  /// Flagged by an administrator as fake or spam (read-only for police).
+  static bool _isFlagged(Map<String, dynamic> r) =>
+      (r['moderation'] ?? '').toString().isNotEmpty;
   // Paging: newest reports first, more on request.
   static const int _pageSize = 200;
   int _limit = _pageSize;
   String? _selectedId;
-  bool _dark = true;
+  // Police use one theme: the same light look as the rest of the app.
+  final bool _dark = false;
   int _mobileTab = 0; // phone: 0 = queue, 1 = map
   final Set<String> _analyzingIds = {};
 
-  static const String _themeKey = 'police_dark_theme';
-
   _CC get _c => _CC(_dark);
-
-  @override
-  void initState() {
-    super.initState();
-    SharedPreferences.getInstance().then((p) {
-      if (mounted) setState(() => _dark = p.getBool(_themeKey) ?? true);
-    });
-  }
 
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
-  }
-
-  Future<void> _toggleTheme() async {
-    setState(() => _dark = !_dark);
-    try {
-      final p = await SharedPreferences.getInstance();
-      await p.setBool(_themeKey, _dark);
-    } catch (_) {}
   }
 
   // ---------------------------------------------------------------------------
@@ -470,6 +472,22 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
 
   Future<void> _assign(String docId, {required bool toMe}) async {
     try {
+      final snap = await FirebaseFirestore.instance
+          .collection('reports')
+          .doc(docId)
+          .get();
+      if (_isFlagged(snap.data() ?? const {})) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'This report was flagged as fake by an administrator and '
+              "can't be assigned.",
+            ),
+          ),
+        );
+        return;
+      }
       await FirebaseFirestore.instance.collection('reports').doc(docId).update({
         'assignedTo': toMe ? _myEmail : FieldValue.delete(),
         'assignedAt': toMe ? FieldValue.serverTimestamp() : FieldValue.delete(),
@@ -795,32 +813,19 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
                   ),
                 ),
               if (!phone)
-              IconButton(
-                key: const Key('police_theme_toggle'),
-                tooltip: _dark
-                    ? 'Switch to light theme'
-                    : 'Switch to dark theme',
-                onPressed: _toggleTheme,
-                icon: Icon(
-                  _dark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
-                  color: c.text,
+                IconButton(
+                  key: const Key('open_prioritization_button'),
+                  tooltip: 'Report prioritization',
+                  icon: Icon(Icons.insights, color: c.text),
+                  onPressed: () =>
+                      Navigator.pushNamed(context, '/prioritization'),
                 ),
-              ),
-              if (!phone)
-              IconButton(
-                key: const Key('open_prioritization_button'),
-                tooltip: 'Report prioritization',
-                icon: Icon(Icons.insights, color: c.text),
-                onPressed: () =>
-                    Navigator.pushNamed(context, '/prioritization'),
-              ),
               PopupMenuButton<String>(
                 tooltip: 'Account',
                 color: c.panel,
                 icon: Icon(Icons.account_circle_outlined, color: c.text),
                 onSelected: (v) {
                   if (v == 'logout') FirebaseAuth.instance.signOut();
-                  if (v == 'theme') _toggleTheme();
                   if (v == 'prioritization') {
                     Navigator.pushNamed(context, '/prioritization');
                   }
@@ -849,25 +854,6 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
                     ),
                   ),
                   if (phone) ...[
-                    PopupMenuItem(
-                      value: 'theme',
-                      child: Row(
-                        children: [
-                          Icon(
-                            _dark
-                                ? Icons.light_mode_outlined
-                                : Icons.dark_mode_outlined,
-                            size: 18,
-                            color: c.text,
-                          ),
-                          const SizedBox(width: 10),
-                          Text(
-                            _dark ? 'Light theme' : 'Dark theme',
-                            style: TextStyle(color: c.text),
-                          ),
-                        ],
-                      ),
-                    ),
                     PopupMenuItem(
                       value: 'prioritization',
                       child: Row(
@@ -942,7 +928,9 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
           (!_dangerOnly ||
               PoliceReportCard.parseBoolField(data['immediateDanger']) ==
                   true) &&
-          (!_mineOnly || data['assignedTo'] == _myEmail);
+          (!_mineOnly || data['assignedTo'] == _myEmail) &&
+          // Flagged reports only appear in the "Fake / flagged" archive.
+          _isFlagged(data) == _showFlagged;
     }).toList();
     reports.sort(
       (a, b) => PoliceDashboardScreen.compareReports(
@@ -1064,6 +1052,7 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
     int today = 0, high = 0, active = 0, resolved = 0, pending = 0;
     for (final d in all) {
       final r = _data(d);
+      if (_isFlagged(r)) continue; // fake/spam: not part of the workload
       final s = _statusOf(r);
       final t = PoliceDashboardScreen.getReportDateTime(r);
       if (t != null &&
@@ -1207,12 +1196,14 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
             padding: const EdgeInsets.fromLTRB(12, 12, 4, 8),
             child: Row(
               children: [
-                Text(
-                  '${reports.length} report${reports.length == 1 ? '' : 's'}',
-                  style: TextStyle(
-                    color: c.text,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
+                Flexible(
+                  child: Text(
+                    '${reports.length} report${reports.length == 1 ? '' : 's'}',
+                    style: TextStyle(
+                      color: c.text,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14,
+                    ),
                   ),
                 ),
                 const Spacer(),
@@ -1265,12 +1256,14 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
                   _selectedStatus == 'all' &&
                       _selectedPriority == 'all' &&
                       !_dangerOnly &&
-                      !_mineOnly,
+                      !_mineOnly &&
+                      !_showFlagged,
                   () => setState(() {
                     _selectedStatus = 'all';
                     _selectedPriority = 'all';
                     _dangerOnly = false;
                     _mineOnly = false;
+                    _showFlagged = false;
                   }),
                 ),
                 chip(
@@ -1327,6 +1320,17 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
                         ? 'all'
                         : 'rejected',
                   ),
+                ),
+                chip(
+                  '🚩 Fake / flagged',
+                  _showFlagged,
+                  () => setState(() {
+                    _showFlagged = !_showFlagged;
+                    if (_showFlagged) {
+                      _selectedStatus = 'all';
+                      _mineOnly = false;
+                    }
+                  }),
                 ),
               ],
             ),
@@ -1445,6 +1449,12 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
                   runSpacing: 4,
                   children: [
                     _pill(_titleCase(status), sbg, sfg),
+                    if (_isFlagged(r))
+                      _pill(
+                        'Flagged ${r['moderation']}',
+                        const Color(0xFF7F1D1D),
+                        const Color(0xFFFECACA),
+                      ),
                     if (danger) _pill('Danger now', pbg, pfg),
                     if (weapon) _pill('Weapon', pbg, pfg),
                     if (r['isAnonymous'] == true)
@@ -1506,43 +1516,59 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
     }
     if (selectedId == null && pts.isNotEmpty) center = pts.first.$3;
 
+    // When the set of pins changes (new reports, filters), zoom to show all.
+    final pinKey = pts.map((p) => p.$1).join(',');
+    if (pinKey != _lastPinKey) {
+      final first = _lastPinKey == null;
+      _lastPinKey = pinKey;
+      if (!first && selectedId == null && pts.length > 1) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          try {
+            _mapController.fitCamera(
+              CameraFit.coordinates(
+                coordinates: [for (final p in pts) p.$3],
+                padding: const EdgeInsets.fromLTRB(40, 60, 40, 70),
+                maxZoom: 15,
+              ),
+            );
+          } catch (_) {
+            // Map not on screen right now.
+          }
+        });
+      }
+    }
+
     return _panel(
       child: Stack(
         children: [
           FlutterMap(
             mapController: _mapController,
-            options: MapOptions(initialCenter: center, initialZoom: 12),
+            options: MapOptions(
+              initialCenter: center,
+              initialZoom: 13,
+              initialCameraFit: (selectedId == null && pts.length > 1)
+                  ? CameraFit.coordinates(
+                      coordinates: [for (final p in pts) p.$3],
+                      padding: const EdgeInsets.fromLTRB(40, 60, 40, 70),
+                      maxZoom: 15,
+                    )
+                  : null,
+            ),
             children: [
-              TileLayer(
-                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'pk.safetyguardian.app',
-                maxNativeZoom: 19,
-                tileBuilder: _dark ? darkModeTileBuilder : null,
-              ),
+              appTileLayer(tileBuilder: _dark ? darkModeTileBuilder : null),
               MarkerLayer(
                 markers: [
                   for (final p in pts)
-                    Marker(
+                    pinMarker(
                       point: p.$3,
-                      width: p.$1 == selectedId ? 44 : 30,
-                      height: p.$1 == selectedId ? 44 : 30,
-                      child: GestureDetector(
-                        onTap: () => _select(p.$1, p.$2, phone: phone),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: _CC.pin(
-                              PoliceReportCard.getPriorityDisplay(
-                                p.$2['priority'],
-                              ),
-                            ),
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: Colors.white,
-                              width: p.$1 == selectedId ? 4 : 2,
-                            ),
-                          ),
-                        ),
+                      color: _CC.pin(
+                        PoliceReportCard.getPriorityDisplay(p.$2['priority']),
                       ),
+                      label: _CC.pinLabel(
+                        PoliceReportCard.getPriorityDisplay(p.$2['priority']),
+                      ),
+                      size: p.$1 == selectedId ? 46 : 36,
+                      onTap: () => _select(p.$1, p.$2, phone: phone),
                     ),
                 ],
               ),
@@ -1562,7 +1588,13 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
                 spacing: 12,
                 runSpacing: 4,
                 children: [
-                  for (final l in const ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'])
+                  for (final l in const [
+                    'CRITICAL',
+                    'HIGH',
+                    'MEDIUM',
+                    'LOW',
+                    'NEW',
+                  ])
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -1576,8 +1608,12 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
                         ),
                         const SizedBox(width: 4),
                         Text(
-                          l[0] + l.substring(1).toLowerCase(),
-                          style: TextStyle(color: c.text, fontSize: 11),
+                          _CC.pinLabel(l),
+                          style: TextStyle(
+                            color: c.text,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ],
                     ),
@@ -1585,6 +1621,39 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
               ),
             ),
           ),
+          Positioned(
+            top: 4,
+            right: 6,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              color: Colors.white70,
+              child: const Text(
+                mapAttribution,
+                style: TextStyle(fontSize: 9, color: Colors.black87),
+              ),
+            ),
+          ),
+          if (pts.length > 1)
+            Positioned(
+              right: 12,
+              bottom: 12,
+              child: Material(
+                color: c.panel,
+                shape: const CircleBorder(),
+                elevation: 2,
+                child: IconButton(
+                  tooltip: 'Show all reports',
+                  icon: Icon(Icons.zoom_out_map, color: c.text),
+                  onPressed: () => _mapController.fitCamera(
+                    CameraFit.coordinates(
+                      coordinates: [for (final p in pts) p.$3],
+                      padding: const EdgeInsets.fromLTRB(40, 60, 40, 70),
+                      maxZoom: 15,
+                    ),
+                  ),
+                ),
+              ),
+            ),
           if (pts.isEmpty)
             Center(
               child: Container(
@@ -1635,6 +1704,7 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
         ? (r['detectedFactors'] as List).map((e) => e.toString()).toList()
         : <String>[];
     bool flag(String k) => PoliceReportCard.parseBoolField(r[k]) == true;
+    final flagged = _isFlagged(r);
     final point = _point(r);
     final reason = (r['reason'] ?? '').toString().trim();
     final history = (r['statusHistory'] is List)
@@ -1717,36 +1787,65 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
           ],
         ),
         const SizedBox(height: 12),
-        Container(
-          padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
-          decoration: BoxDecoration(
-            color: c.chip,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            children: [
-              Icon(Icons.badge_outlined, size: 18, color: c.muted),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  (r['assignedTo'] ?? '').toString().isEmpty
-                      ? 'Not assigned'
-                      : (r['assignedTo'] == _myEmail
-                            ? 'Assigned to you'
-                            : 'Assigned to ${r['assignedTo']}'),
-                  style: TextStyle(color: c.text, fontSize: 13),
+        if (flagged)
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF7F1D1D).withValues(alpha: _dark ? 0.6 : 1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.flag, color: Color(0xFFFECACA), size: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Flagged as ${r['moderation']} by an administrator'
+                    '${(r['moderationReason'] ?? '').toString().isEmpty ? '' : ': ${r['moderationReason']}'}.\n'
+                    'This case is closed and read-only. Only an administrator '
+                    'can clear the flag and reopen it.',
+                    style: const TextStyle(
+                      color: Color(0xFFFEE2E2),
+                      fontSize: 13,
+                    ),
+                  ),
                 ),
-              ),
-              TextButton(
-                key: Key('assign_$id'),
-                onPressed: () => _assign(id, toMe: r['assignedTo'] != _myEmail),
-                child: Text(
-                  r['assignedTo'] == _myEmail ? 'Unassign' : 'Assign to me',
+              ],
+            ),
+          )
+        else
+          Container(
+            padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
+            decoration: BoxDecoration(
+              color: c.chip,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.badge_outlined, size: 18, color: c.muted),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    (r['assignedTo'] ?? '').toString().isEmpty
+                        ? 'Not assigned'
+                        : (r['assignedTo'] == _myEmail
+                              ? 'Assigned to you'
+                              : 'Assigned to ${r['assignedTo']}'),
+                    style: TextStyle(color: c.text, fontSize: 13),
+                  ),
                 ),
-              ),
-            ],
+                TextButton(
+                  key: Key('assign_$id'),
+                  onPressed: () =>
+                      _assign(id, toMe: r['assignedTo'] != _myEmail),
+                  child: Text(
+                    r['assignedTo'] == _myEmail ? 'Unassign' : 'Assign to me',
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
         const SizedBox(height: 14),
         Text(
           (r['description'] ?? 'No description').toString(),
@@ -1771,27 +1870,28 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
           const SizedBox(height: 8),
           Text(reason, style: TextStyle(color: c.muted, fontSize: 13)),
         ],
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            key: Key('analyze_report_$id'),
-            onPressed: analyzing ? null : () => _analyzeReport(id, r),
-            icon: analyzing
-                ? const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.auto_awesome, size: 16),
-            label: Text(
-              analyzing
-                  ? 'Analyzing…'
-                  : (p == 'Not Analyzed'
-                        ? 'Run AI analysis'
-                        : 'Re-run AI analysis'),
+        if (!flagged)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              key: Key('analyze_report_$id'),
+              onPressed: analyzing ? null : () => _analyzeReport(id, r),
+              icon: analyzing
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.auto_awesome, size: 16),
+              label: Text(
+                analyzing
+                    ? 'Analyzing…'
+                    : (p == 'Not Analyzed'
+                          ? 'Run AI analysis'
+                          : 'Re-run AI analysis'),
+              ),
             ),
           ),
-        ),
         if (images.isNotEmpty) ...[
           section('EVIDENCE (${images.length})'),
           GridView.count(
@@ -1824,6 +1924,10 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
                 ),
             ],
           ),
+        ],
+        if (EvidenceVideos.has(r)) ...[
+          section('VIDEO EVIDENCE'),
+          EvidenceVideos.forReport(r, background: c.chip, foreground: c.text),
         ],
         section('LOCATION'),
         Row(
@@ -1899,49 +2003,62 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
           ),
         ],
         const SizedBox(height: 18),
-        Row(
-          children: [
-            Expanded(
-              child: FilledButton(
-                key: Key('status_in_progress_$id'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: _CC.accent,
-                  minimumSize: const Size(0, 46),
+        if (!flagged)
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton(
+                  key: Key('status_in_progress_$id'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _CC.accent,
+                    minimumSize: const Size(0, 46),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  onPressed: () =>
+                      _showStatusSheet(id, r, initialStatus: 'in progress'),
+                  child: const FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text('In progress', maxLines: 1, softWrap: false),
+                  ),
                 ),
-                onPressed: () =>
-                    _showStatusSheet(id, r, initialStatus: 'in progress'),
-                child: const Text('In progress'),
               ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: FilledButton(
-                key: Key('status_resolve_$id'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF15803D),
-                  minimumSize: const Size(0, 46),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton(
+                  key: Key('status_resolve_$id'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF15803D),
+                    minimumSize: const Size(0, 46),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  onPressed: () =>
+                      _showStatusSheet(id, r, initialStatus: 'resolved'),
+                  child: const FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text('Resolve', maxLines: 1, softWrap: false),
+                  ),
                 ),
-                onPressed: () =>
-                    _showStatusSheet(id, r, initialStatus: 'resolved'),
-                child: const Text('Resolve'),
               ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: OutlinedButton(
-                key: Key('status_reject_$id'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: c.text,
-                  side: BorderSide(color: c.borderStrong),
-                  minimumSize: const Size(0, 46),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton(
+                  key: Key('status_reject_$id'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: c.text,
+                    side: BorderSide(color: c.borderStrong),
+                    minimumSize: const Size(0, 46),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  onPressed: () =>
+                      _showStatusSheet(id, r, initialStatus: 'rejected'),
+                  child: const FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text('Reject', maxLines: 1, softWrap: false),
+                  ),
                 ),
-                onPressed: () =>
-                    _showStatusSheet(id, r, initialStatus: 'rejected'),
-                child: const Text('Reject'),
               ),
-            ),
-          ],
-        ),
+            ],
+          ),
       ],
     );
   }
@@ -1952,6 +2069,16 @@ class _PoliceDashboardScreenState extends State<PoliceDashboardScreen> {
     Map<String, dynamic> report, {
     String? initialStatus,
   }) async {
+    if (_isFlagged(report)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Flagged as fake by an administrator: only an admin can reopen it.',
+          ),
+        ),
+      );
+      return;
+    }
     final current = (report['status'] ?? 'pending')
         .toString()
         .toLowerCase()
@@ -2350,20 +2477,24 @@ class PoliceReportCard extends StatelessWidget {
         children: [
           Icon(statusIcon, size: 14, color: textColor),
           const SizedBox(width: 4),
-          Text(
-            '$label: ',
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: textColor,
+          Flexible(
+            child: Text(
+              '$label: ',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: textColor,
+              ),
             ),
           ),
-          Text(
-            statusText,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              color: textColor,
+          Flexible(
+            child: Text(
+              statusText,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: textColor,
+              ),
             ),
           ),
         ],
@@ -2524,14 +2655,16 @@ class PoliceReportCard extends StatelessWidget {
                                 : Colors.grey.shade600,
                           ),
                           const SizedBox(width: 6),
-                          Text(
-                            'AI Analysis',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                              color: isAiAnalyzed
-                                  ? getPriorityColor(priorityDisplay)
-                                  : Colors.grey.shade800,
+                          Flexible(
+                            child: Text(
+                              'AI Analysis',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                                color: isAiAnalyzed
+                                    ? getPriorityColor(priorityDisplay)
+                                    : Colors.grey.shade800,
+                              ),
                             ),
                           ),
                           if (report['analysisSource'] == 'offline') ...[
@@ -2559,12 +2692,14 @@ class PoliceReportCard extends StatelessWidget {
                               color: Colors.grey.shade600,
                             ),
                             const SizedBox(width: 6),
-                            Text(
-                              'AI Analysis: Not Analyzed',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.grey.shade700,
+                            Flexible(
+                              child: Text(
+                                'AI Analysis: Not Analyzed',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.grey.shade700,
+                                ),
                               ),
                             ),
                           ],

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:iconsax/iconsax.dart';
 
 import '../theme/app_theme.dart';
+import '../theme/responsive.dart';
 
 /// Full-screen "Are you safe?" prompt shown when distress is detected,
 /// even if the app was closed. Starts SOS after 60 s with no answer.
@@ -69,7 +70,8 @@ class _DistressAlertScreenState extends State<DistressAlertScreen> {
           child: Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 480),
-              child: Padding(
+              child: FillScroll(
+                child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: Column(
                   children: [
@@ -160,6 +162,7 @@ class _DistressAlertScreenState extends State<DistressAlertScreen> {
                     ),
                   ],
                 ),
+              ),
               ),
             ),
           ),

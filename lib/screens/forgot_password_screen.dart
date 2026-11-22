@@ -259,7 +259,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Text('Remember your password?'),
+                    const Flexible(child: Text('Remember your password?')),
                     TextButton(
                       onPressed: () => Navigator.pop(context),
                       child: const Text(
