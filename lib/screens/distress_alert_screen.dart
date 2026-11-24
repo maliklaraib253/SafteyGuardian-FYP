@@ -7,7 +7,7 @@ import '../theme/responsive.dart';
 import '../services/distress_monitor.dart';
 
 /// Full-screen "Are you safe?" prompt shown when distress is detected,
-/// even if the app was closed. Starts SOS after 60 s with no answer.
+/// even if the app was closed. Starts SOS after 2 minutes with no answer.
 class DistressAlertScreen extends StatefulWidget {
   const DistressAlertScreen({super.key});
 
@@ -86,7 +86,7 @@ class _DistressAlertScreenState extends State<DistressAlertScreen> {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Text(
-                                  '$_left',
+                                  '${_left ~/ 60}:${(_left % 60).toString().padLeft(2, '0')}',
                                   style: const TextStyle(
                                     fontSize: 52,
                                     fontWeight: FontWeight.w800,
@@ -94,7 +94,7 @@ class _DistressAlertScreenState extends State<DistressAlertScreen> {
                                   ),
                                 ),
                                 const Text(
-                                  'seconds',
+                                  'min : sec',
                                   style: TextStyle(color: AppColors.textMuted),
                                 ),
                               ],

@@ -43,7 +43,7 @@ class _DistressDetectionScreenState extends State<DistressDetectionScreen>
   String _latestTranscript = '';
   String _lastDetectedDistress = 'Normal';
 
-  // Countdown timer for Auto-SOS: 1 minute (60 seconds)
+  // Countdown timer for Auto-SOS (DistressMonitor.alertSeconds: 2 minutes)
   Timer? _countdownTimer;
 
   // Real accelerometer stream + state to prevent dialog spam

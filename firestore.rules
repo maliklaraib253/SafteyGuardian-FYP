@@ -177,11 +177,13 @@ service cloud.firestore {
 
     // Companion Mode live tracking sessions
     match /companion_sessions/{sessionId} {
-      // Live trips: only the traveller and police.
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isPolice());
+      // Trips are private: only the traveller. Trusted contacts follow the
+      // trip through SMS links; police get no trip data (only SOS calls 15).
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
       allow create: if isAuthenticated() && !isBlocked() && request.resource.data.userId == request.auth.uid;
-      allow update: if isAuthenticated() && (resource.data.userId == request.auth.uid || isPolice());
-      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isPolice());
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid
+        && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
     }
   }
 }

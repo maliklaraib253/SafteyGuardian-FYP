@@ -54,14 +54,16 @@ class DistressMonitor {
       StreamController<MotionReading>.broadcast();
   final StreamController<String> _log = StreamController<String>.broadcast();
 
-  /// Seconds the user has to answer "Are you safe?".
-  static const int alertSeconds = 60;
+  /// Seconds the user has to answer "Are you safe?" (2 minutes).
+  static const int alertSeconds = 120;
 
   /// Seconds left on the "Are you safe?" countdown (null = no alert).
   /// The countdown runs here, not in the alert screen, so it keeps going
   /// while the app is in the background or the screen is locked.
   final ValueNotifier<int?> secondsLeft = ValueNotifier<int?>(null);
   Timer? _alertTimer;
+  Timer? _voiceResumeTimer;
+  DateTime? _deadline;
   String _alertReason = '';
   String get alertReason => _alertReason;
 
@@ -136,6 +138,7 @@ class DistressMonitor {
   Future<void> stop() async {
     if (!_running) return;
     _running = false;
+    _voiceResumeTimer?.cancel();
     debugPrint('[DistressMonitor] stopped');
     await _accelSub?.cancel();
     await _voiceSub?.cancel();
@@ -189,19 +192,39 @@ class DistressMonitor {
     _log.add('⚠️ $reason');
     debugPrint('[DistressMonitor] trigger: $reason');
 
+    // Stop the microphone during the alert: the alert sound must be heard
+    // and the recogniser must not keep the phone's sounds muted.
+    _voiceResumeTimer?.cancel();
+    if (_voiceEnabled) await voice.stopMonitoring();
+
     // 1. Start the countdown right away, whether or not the app is open.
+    // It counts against a fixed deadline on the wall clock, so time that
+    // passes while the phone sleeps is still counted, and the native side
+    // holds a wake lock (showDistressAlert) so the timer keeps firing with
+    // the screen off. No tap on the notification is needed.
     _alertReason = reason;
+    _deadline = now.add(const Duration(seconds: alertSeconds));
     secondsLeft.value = alertSeconds;
     _alertTimer?.cancel();
+    var lastBucket = alertSeconds ~/ 10;
     _alertTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-      final left = (secondsLeft.value ?? 0) - 1;
+      final deadline = _deadline;
+      if (deadline == null) {
+        t.cancel();
+        return;
+      }
+      final left = deadline.difference(DateTime.now()).inSeconds;
       if (left <= 0) {
         t.cancel();
         startSosNow();
         return;
       }
       secondsLeft.value = left;
-      if (left % 10 == 0) _showAlertNotification(left);
+      final bucket = left ~/ 10;
+      if (bucket != lastBucket) {
+        lastBucket = bucket;
+        _showAlertNotification(left);
+      }
     });
 
     // 2. Get the user's attention: wake the screen, show the alert over the
@@ -221,8 +244,12 @@ class DistressMonitor {
     navigatorKey.currentState?.pushNamed('/distress-alert', arguments: reason);
   }
 
+  static String _fmt(int s) =>
+      '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
+
   Future<void> _showAlertNotification(int left) async {
-    final text = '$_alertReason. SOS starts in $left s unless you answer.';
+    final text =
+        '$_alertReason. SOS starts in ${_fmt(left)} unless you answer.';
     try {
       await _appControl.invokeMethod('showDistressAlert', {
         'title': '🚨 Are you safe?',
@@ -237,9 +264,10 @@ class DistressMonitor {
     } catch (_) {}
   }
 
-  Future<void> _closeAlert() async {
+  Future<void> _closeAlert({bool resumeVoice = true}) async {
     _alertTimer?.cancel();
     _alertTimer = null;
+    _deadline = null;
     secondsLeft.value = null;
     _alertOpen = false;
     try {
@@ -250,6 +278,33 @@ class DistressMonitor {
       (route) => route.settings.name != '/distress-alert',
     );
     await _restoreNotification();
+    if (resumeVoice) {
+      await _resumeVoice();
+    } else {
+      _resumeVoiceAfterSos();
+    }
+  }
+
+  Future<void> _resumeVoice() async {
+    if (_running && _voiceEnabled && !voice.isMonitoring) {
+      await voice.startMonitoring();
+    }
+  }
+
+  /// Keeps the microphone off while an SOS is calling people, then turns
+  /// voice detection back on once the SOS has ended.
+  void _resumeVoiceAfterSos() {
+    _voiceResumeTimer?.cancel();
+    _voiceResumeTimer = Timer.periodic(const Duration(seconds: 30), (t) {
+      if (!_running) {
+        t.cancel();
+        return;
+      }
+      if (!SosService.anySosRunning && !SosService.sessionActive) {
+        t.cancel();
+        _resumeVoice();
+      }
+    });
   }
 
   /// "I'm safe" on the alert screen or its notification.
@@ -262,7 +317,7 @@ class DistressMonitor {
   /// "Get help now", or the countdown ran out: start the SOS.
   Future<void> startSosNow() async {
     if (!_alertOpen) return;
-    await _closeAlert();
+    await _closeAlert(resumeVoice: false);
     _log.add('🚨 No answer - SOS started');
     final resumed =
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;

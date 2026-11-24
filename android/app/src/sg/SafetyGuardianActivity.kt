@@ -17,6 +17,7 @@ import android.os.Bundle
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.util.Log
 import android.view.WindowManager
 import android.provider.CallLog
@@ -370,6 +371,33 @@ class SafetyGuardianActivity : FlutterActivity() {
     private val alertChannelId = "distress_alert_channel"
     private val alertNotificationId = 4711
 
+    /** Keeps the CPU awake during the "Are you safe?" countdown, so the
+     *  2-minute timer keeps running with the screen off. */
+    private var alertWakeLock: PowerManager.WakeLock? = null
+
+    private fun holdAlertWakeLock() {
+        try {
+            if (alertWakeLock?.isHeld == true) return
+            val pm = applicationContext.getSystemService(Context.POWER_SERVICE) as PowerManager
+            alertWakeLock = pm.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "SafetyGuardian:distressAlert"
+            ).apply {
+                setReferenceCounted(false)
+                acquire(4 * 60 * 1000L) // safety timeout: alert is 2 min
+            }
+        } catch (e: Exception) {
+            Log.w("SG_ALERT", "wake lock failed: ${e.message}")
+        }
+    }
+
+    private fun releaseAlertWakeLock() {
+        try {
+            if (alertWakeLock?.isHeld == true) alertWakeLock?.release()
+        } catch (_: Exception) {}
+        alertWakeLock = null
+    }
+
     /**
      * High-priority "Are you safe?" notification with a full-screen intent:
      * on a locked or idle phone Android opens the app over the lock screen
@@ -379,6 +407,7 @@ class SafetyGuardianActivity : FlutterActivity() {
      */
     @Suppress("DEPRECATION")
     private fun showDistressAlert(title: String, text: String) {
+        holdAlertWakeLock()
         val ctx = applicationContext
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
@@ -431,6 +460,7 @@ class SafetyGuardianActivity : FlutterActivity() {
     }
 
     private fun cancelDistressAlert() {
+        releaseAlertWakeLock()
         try {
             val nm = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             nm.cancel(alertNotificationId)
@@ -454,24 +484,111 @@ class SafetyGuardianActivity : FlutterActivity() {
         }
     }
 
+    private var beepMuted = false
+    private var musicMutedByUs = false
+    private val beepHandler = Handler(Looper.getMainLooper())
+
+    /** Volumes saved before muting, restored when monitoring stops. */
+    private val savedVolumes = HashMap<Int, Int>()
+
+    private fun beepStreams(): IntArray {
+        // Not STREAM_NOTIFICATION: on many phones it is tied to the ringtone,
+        // and muting it would also silence incoming calls.
+        val list = mutableListOf(AudioManager.STREAM_SYSTEM)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            list.add(AudioManager.STREAM_ACCESSIBILITY)
+        }
+        return list.toIntArray()
+    }
+
+    /** Mute + volume 0: some phones ignore one of the two. */
+    private fun silence(audio: AudioManager, stream: Int) {
+        try {
+            if (!savedVolumes.containsKey(stream)) {
+                savedVolumes[stream] = audio.getStreamVolume(stream)
+            }
+            audio.adjustStreamVolume(stream, AudioManager.ADJUST_MUTE, 0)
+        } catch (e: Exception) {
+            Log.w("SG_BEEP", "mute $stream failed: ${e.message}")
+        }
+        try {
+            audio.setStreamVolume(stream, 0, 0)
+        } catch (e: Exception) {
+            Log.w("SG_BEEP", "volume 0 on $stream failed: ${e.message}")
+        }
+    }
+
+    private fun restore(audio: AudioManager, stream: Int) {
+        try {
+            audio.adjustStreamVolume(stream, AudioManager.ADJUST_UNMUTE, 0)
+        } catch (_: Exception) {}
+        val v = savedVolumes.remove(stream) ?: return
+        try {
+            audio.setStreamVolume(stream, v, 0)
+        } catch (e: Exception) {
+            Log.w("SG_BEEP", "restore $stream failed: ${e.message}")
+        }
+    }
+
+    /** While muted: if the user starts music or a video, give the sound back.
+     *  The recogniser's own beep also counts as "music playing" for a moment,
+     *  so music must play for 3 s in a row (6 checks, 0.5 s apart) before
+     *  the sound is given back; a beep (< 1 s) never gets that far. */
+    private var musicActiveChecks = 0
+    private val musicWatcher = object : Runnable {
+        override fun run() {
+            if (!beepMuted) return
+            try {
+                val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                if (audio.isMusicActive) musicActiveChecks++ else musicActiveChecks = 0
+                if (musicMutedByUs && musicActiveChecks >= 6) {
+                    Log.i("SG_BEEP", "user is playing media: music sound back on")
+                    restore(audio, AudioManager.STREAM_MUSIC)
+                    musicMutedByUs = false
+                }
+            } catch (_: Exception) {}
+            beepHandler.postDelayed(this, 500)
+        }
+    }
+
     /**
-     * Mutes the streams Android's SpeechRecognizer uses for its start/stop
-     * beep, so continuous voice-distress monitoring stays silent.
+     * Silences the start/stop "ding/tik" of Android's SpeechRecognizer for
+     * the whole time voice-distress monitoring is on: system and
+     * accessibility sounds, plus music while no media is playing (given
+     * back when the user plays something). Calls (ring) and alarms are never
+     * touched. All volumes are restored when monitoring stops.
      */
     private fun setBeepMuted(muted: Boolean) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
         val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val direction = if (muted) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE
-        for (stream in intArrayOf(
-            AudioManager.STREAM_MUSIC,
-            AudioManager.STREAM_SYSTEM,
-            AudioManager.STREAM_NOTIFICATION
-        )) {
-            try {
-                audio.adjustStreamVolume(stream, direction, 0)
-            } catch (e: Exception) {
-                // Do-Not-Disturb can block notification stream changes; ignore.
+        if (muted) {
+            if (!beepMuted) {
+                beepMuted = true
+                musicActiveChecks = 0
+                for (st in beepStreams()) silence(audio, st)
+                beepHandler.removeCallbacks(musicWatcher)
+                beepHandler.postDelayed(musicWatcher, 500)
             }
+            // Before every listening session: mute music again once the
+            // user's media has stopped.
+            if (!musicMutedByUs && musicActiveChecks == 0 && !audio.isMusicActive) {
+                silence(audio, AudioManager.STREAM_MUSIC)
+                musicMutedByUs = true
+            }
+            Log.i(
+                "SG_BEEP",
+                "session muted: system=${audio.getStreamVolume(AudioManager.STREAM_SYSTEM)} " +
+                    "notif=${audio.getStreamVolume(AudioManager.STREAM_NOTIFICATION)} " +
+                    "music=${audio.getStreamVolume(AudioManager.STREAM_MUSIC)} " +
+                    "musicActive=${audio.isMusicActive} ringer=${audio.ringerMode}"
+            )
+        } else {
+            beepHandler.removeCallbacks(musicWatcher)
+            if (beepMuted) for (st in beepStreams()) restore(audio, st)
+            if (musicMutedByUs) restore(audio, AudioManager.STREAM_MUSIC)
+            beepMuted = false
+            musicMutedByUs = false
+            Log.i("SG_BEEP", "monitoring off: sounds restored")
         }
     }
 

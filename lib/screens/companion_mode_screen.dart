@@ -88,6 +88,8 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
   // ─── STATE: ROUTE DEVIATION & ALERTS ───────────────────────────────────────
   int _consecutiveDeviationCount = 0;
   bool _isDeviationActive = false;
+  bool _deviationDialogOpen = false;
+  bool _arrivalHandled = false;
   DateTime? _lastDeviationAlertTime;
 
   // ─── STATE: USER PROFILE ───────────────────────────────────────────────────
@@ -578,7 +580,9 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
 
     if (await FlutterForegroundTask.isRunningService) return;
 
+    // Android 14+ needs the service type; location is what this trip uses.
     await FlutterForegroundTask.startService(
+      serviceTypes: [ForegroundServiceTypes.location],
       notificationTitle: 'SafetyGuardian — Companion Mode Active',
       notificationText: 'Tracking journey to $_destinationAddress',
     );
@@ -655,6 +659,8 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
       _consecutiveDeviationCount = 0;
       _isDeviationActive = false;
       _lastDeviationAlertTime = null;
+      _deviationDialogOpen = false;
+      _arrivalHandled = false;
       _autoFollowUser = true;
     });
 
@@ -693,7 +699,7 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
   }
 
   void _handleLocationUpdate(Position pos) {
-    if (!mounted || !_isActive) return;
+    if (!mounted || !_isActive || _arrivalHandled) return;
 
     final newLatLng = LatLng(pos.latitude, pos.longitude);
 
@@ -758,7 +764,12 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
 
       // ─── 9. ARRIVAL DETECTION (Accuracy guarded to avoid false trigger) ──────
       if (remainingMeters <= arrivalRadiusMeters && pos.accuracy <= 40.0) {
-        _handleArrivalDetected();
+        // GPS keeps sending fixes while the arrival SMS is going out; handle
+        // arrival only once (one SMS, one dialog).
+        if (!_arrivalHandled) {
+          _arrivalHandled = true;
+          _handleArrivalDetected();
+        }
         return;
       }
     }
@@ -852,20 +863,22 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
       debugPrint('Error sending deviation SMS: $e');
     }
 
-    // 2. Safely record deviation in Firestore
+    // 2. Safely record deviation in Firestore (private to the traveller)
     try {
       await _updateFirestoreDeviationStatus(true);
     } catch (e) {
       debugPrint('Error updating Firestore deviation: $e');
     }
 
-    // 3. Display deviation warning dialog on screen
-    if (mounted) {
+    // 3. Display deviation warning dialog on screen (only one at a time;
+    // repeat alerts every 3 minutes still send the SMS).
+    if (mounted && !_deviationDialogOpen) {
       _showDeviationWarningDialog();
     }
   }
 
   void _showDeviationWarningDialog() {
+    _deviationDialogOpen = true;
     showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -931,7 +944,7 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
           ),
         ],
       ),
-    );
+    ).whenComplete(() => _deviationDialogOpen = false);
   }
 
   // ─── 7. INITIAL JOURNEY START SMS ──────────────────────────────────────────
@@ -1326,6 +1339,8 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
 
   // ─── STOP TRACKING & CLEANUP ───────────────────────────────────────────────
   Future<void> _stopCompanionMode({bool completed = false}) async {
+    final wasActive = _isActive;
+    _isActive = false;
     _positionSubscription?.cancel();
     _positionSubscription = null;
     _firestoreSyncTimer?.cancel();
@@ -1358,15 +1373,9 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
       }
     }
 
-    if (!mounted) return;
-    setState(() {
-      _isActive = false;
-      _isDeviationActive = false;
-      _consecutiveDeviationCount = 0;
-    });
-
-    if (!completed) {
-      _showSnackBar('Companion Mode Stopped', Colors.orange);
+    // "Trip ended" SMS: sent even if the screen was already closed
+    // ("Stop & Exit" leaves the screen straight away).
+    if (!completed && wasActive) {
       try {
         LatLng? endLoc =
             _currentLocation ??
@@ -1393,6 +1402,16 @@ class _CompanionModeScreenState extends State<CompanionModeScreen> {
       } catch (e) {
         debugPrint('Error sending trip end SMS: $e');
       }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _isActive = false;
+      _isDeviationActive = false;
+      _consecutiveDeviationCount = 0;
+    });
+    if (!completed) {
+      _showSnackBar('Companion Mode Stopped', Colors.orange);
     }
   }
 

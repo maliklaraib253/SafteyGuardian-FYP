@@ -426,12 +426,17 @@ class VoiceDistressService {
   void _scheduleRestart() {
     if (!_shouldKeepListening) return;
     _restartTimer?.cancel();
-    final delayMs = (300 * (1 << _consecutiveErrors.clamp(0, 4))).clamp(300, 5000);
+    // Short pause between sessions; longer after real errors.
+    final delayMs =
+        (800 * (1 << _consecutiveErrors.clamp(0, 4))).clamp(800, 10000);
     _restartTimer = Timer(Duration(milliseconds: delayMs), _startSession);
   }
 
-  /// Android plays a short beep whenever the recogniser starts. Mute it so the
-  /// sentinel stays discreet (no-op on iOS).
+  /// Android's recogniser beeps every time a listening session starts and
+  /// ends, and sessions restart every few seconds in silence. The sounds stay
+  /// muted for the whole time monitoring is on (the native side leaves music
+  /// alone while the user is playing media) and come back when it stops.
+  /// No-op on iOS.
   Future<void> _setBeepMuted(bool muted) async {
     if (kIsWeb || !Platform.isAndroid) return;
     try {
@@ -462,8 +467,6 @@ class VoiceDistressService {
       _isListening = false;
       _consecutiveErrors++;
       _scheduleRestart();
-    } finally {
-      Future.delayed(const Duration(milliseconds: 700), () => _setBeepMuted(false));
     }
   }
 
